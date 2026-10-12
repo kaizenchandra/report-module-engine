@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "1",
+  "definitionId": "sales-summary",
+  "definitionVersion": 1,
+  "parameters": {
+    "title": "Quarterly sales review",
+    "locale": "de-DE",
+    "timeZone": "Europe/Berlin"
+  },
+  "outputs": [
+    "CSV"
+  ],
+  "destinationRef": "local-s3"
+}

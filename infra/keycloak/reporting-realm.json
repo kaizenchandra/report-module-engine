@@ -1,0 +1,128 @@
+{
+  "realm": "reporting",
+  "enabled": true,
+  "sslRequired": "none",
+  "roles": {
+    "realm": [
+      {
+        "name": "REPORT_USER"
+      },
+      {
+        "name": "REPORT_ADMIN"
+      },
+      {
+        "name": "DELIVERY_SERVICE"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "report-web",
+      "secret": "${REPORT_WEB_SECRET}",
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:3005/backend/login/oauth2/code/reporting"
+      ],
+      "webOrigins": ["http://localhost:3005"],
+      "protocolMappers": [
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "report-core",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "delivery-worker",
+      "secret": "${DELIVERY_CLIENT_SECRET}",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "report-core",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "reporter",
+      "enabled": true,
+      "firstName": "Local",
+      "lastName": "Reporter",
+      "email": "reporter@example.invalid",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${REPORT_TEST_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["REPORT_USER"],
+      "id": "30bc4d5d-b9dd-4be4-a776-c78283d3cb47"
+    },
+    {
+      "username": "service-account-delivery-worker",
+      "enabled": true,
+      "serviceAccountClientId": "delivery-worker",
+      "realmRoles": ["DELIVERY_SERVICE"]
+    },
+    {
+      "id": "74f54c64-793a-4cef-b91d-8c3d9e3fb064",
+      "username": "operator",
+      "enabled": true,
+      "firstName": "Local",
+      "lastName": "Operator",
+      "email": "operator@example.invalid",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${REPORT_ADMIN_TEST_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["REPORT_ADMIN", "REPORT_USER"]
+    }
+  ]
+}

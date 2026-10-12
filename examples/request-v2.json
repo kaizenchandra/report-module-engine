@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "2",
+  "definitionId": "sales-summary",
+  "definitionVersion": 1,
+  "parameters": {
+    "title": "Multi-format sales review"
+  },
+  "outputs": ["PDF", "XLSX", "CSV"],
+  "optionalOutputs": ["CSV"],
+  "deliveries": [
+    {
+      "destinationRef": "local-s3",
+      "outputs": ["PDF", "XLSX"],
+      "required": true
+    },
+    {
+      "destinationRef": "local-gcs",
+      "outputs": ["PDF", "XLSX", "CSV"],
+      "required": false
+    }
+  ]
+}

@@ -1,0 +1,300 @@
+package com.acme.reports;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.*;
+import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+@Service
+public class JobService {
+  private final JdbcTemplate db;
+  private final ObjectMapper json;
+  private final Renderer renderer;
+
+  JobService(JdbcTemplate db, ObjectMapper json, Renderer renderer) {
+    this.db = db;
+    this.json = json;
+    this.renderer = renderer;
+  }
+
+  @Transactional
+  public Map<String, Object> submit(String subject, String key, ReportRequest request)
+      throws Exception {
+    return accept(subject, key, request, null);
+  }
+
+  @Transactional
+  public Map<String, Object> reprocess(String subject, String key, UUID parentId) throws Exception {
+    // Owner lookup precedes all diagnostics so another subject cannot probe parent state.
+    var parent = get(subject, parentId);
+    if (!Set.of("SUCCEEDED", "PARTIAL_SUCCESS", "FAILED", "CANCELLED")
+        .contains(parent.get("status")))
+      throw new ResponseStatusException(
+          HttpStatus.CONFLICT, "Only terminal jobs can be reprocessed");
+    var resolved = json.readTree((String) parent.get("configuration"));
+    var request = json.treeToValue(resolved.path("request"), ReportRequest.class);
+    return accept(subject, key, request, parentId);
+  }
+
+  private Map<String, Object> accept(
+      String subject, String key, ReportRequest request, UUID parentId) throws Exception {
+    if (!key.matches("[a-zA-Z0-9_-]{8,128}"))
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid idempotency key");
+    String canonical = json.writeValueAsString(request);
+    String fingerprint =
+        Renderer.sha256(
+            (parentId == null ? canonical : "reprocess:" + parentId + ":" + canonical)
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    // Per-subject serialization makes the quota check and idempotency lookup race-safe.
+    db.queryForList("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", subject);
+    var existing =
+        db.queryForList(
+            "SELECT id,request_hash FROM report_job WHERE owner_subject=? AND idempotency_key=?",
+            subject,
+            key);
+    if (!existing.isEmpty()) {
+      if (!existing.getFirst().get("request_hash").equals(fingerprint))
+        throw new ResponseStatusException(
+            HttpStatus.CONFLICT, "Idempotency key has a different request");
+      return get(subject, (UUID) existing.getFirst().get("id"));
+    }
+    Integer active =
+        db.queryForObject(
+            "SELECT count(*) FROM report_job WHERE owner_subject=? AND status IN"
+                + " ('QUEUED','RUNNING','DELIVERING')",
+            Integer.class,
+            subject);
+    if (active != null && active >= 20)
+      throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Active job quota reached");
+    if (!request.isMappingValid())
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid output/delivery mappings");
+    // Lock the head against retirement while selecting an immutable, explicitly requested version.
+    var definitions =
+        db.queryForList(
+            "SELECT v.definition_id AS"
+                + " id,v.version,v.name,v.description,v.template_resource,v.data_source_ref FROM"
+                + " report_definition d JOIN report_definition_version v ON v.definition_id=d.id"
+                + " WHERE d.id=? AND d.enabled=true AND v.version=? AND v.enabled=true FOR SHARE OF"
+                + " d",
+            request.definitionId(),
+            request.definitionVersion());
+    if (definitions.isEmpty())
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Definition version unavailable");
+    var definition = definitions.getFirst();
+    String templateHash =
+        TemplateController.resolve(db, renderer, definition.get("template_resource").toString());
+    String dataReference = definition.get("data_source_ref").toString();
+    if (!"sample-v1".equals(dataReference)) StructuredData.load(db, json, dataReference);
+    // Resolve every mutable destination once, at acceptance, under shared locks in stable order.
+    var snapshots = new LinkedHashMap<String, Map<String, Object>>();
+    for (String reference :
+        request.resolvedDeliveries().stream()
+            .map(ReportRequest.Delivery::destinationRef)
+            .distinct()
+            .sorted()
+            .toList()) {
+      var rows =
+          db.queryForList(
+              "SELECT id,provider,bucket,prefix,version FROM destination WHERE id=? AND"
+                  + " enabled=true FOR SHARE",
+              reference);
+      if (rows.isEmpty())
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Destination unavailable");
+      snapshots.put(reference, rows.getFirst());
+    }
+    var targets = new HashSet<String>();
+    for (var mapping : request.resolvedDeliveries()) {
+      var d = snapshots.get(mapping.destinationRef());
+      for (String format : mapping.outputs()) {
+        if (!targets.add(
+            d.get("provider") + ":" + d.get("bucket") + ":" + d.get("prefix") + ":" + format))
+          throw new ResponseStatusException(
+              HttpStatus.BAD_REQUEST, "Duplicate physical delivery target");
+      }
+    }
+    UUID id = UUID.randomUUID();
+    Map<String, Object> config =
+        new LinkedHashMap<>(
+            Map.of(
+                "request",
+                request,
+                "templateSha256",
+                templateHash,
+                "datasetVersion",
+                dataReference,
+                "locale",
+                request.parameters().resolvedLocale(),
+                "timezone",
+                request.parameters().resolvedTimeZone()));
+    config.put("definition", definition);
+    if ("1".equals(request.schemaVersion()))
+      config.put("destination", snapshots.get(request.destinationRef()));
+    else config.put("destinations", snapshots);
+    db.update(
+        "INSERT INTO"
+            + " report_job(id,owner_subject,idempotency_key,request_hash,resolved_config,status,stage,parent_job_id)"
+            + " VALUES (?,?,?,?,?::jsonb,'QUEUED','accepted',?)",
+        id,
+        subject,
+        key,
+        fingerprint,
+        json.writeValueAsString(config),
+        parentId);
+    for (String format : request.outputs()) {
+      db.update(
+          "INSERT INTO report_output(job_id,format,required) VALUES (?,?,?)",
+          id,
+          format,
+          request.outputRequired(format));
+    }
+    db.update(
+        "INSERT INTO audit_event(actor,action,resource_id) VALUES (?,'JOB_ACCEPTED',?)",
+        subject,
+        id.toString());
+    if (parentId != null)
+      db.update(
+          "INSERT INTO audit_event(actor,action,resource_id) VALUES (?,'JOB_REPROCESSED',?)",
+          subject,
+          id.toString());
+    return get(subject, id);
+  }
+
+  Map<String, Object> get(String subject, UUID id) {
+    var rows =
+        db.queryForList(
+            "SELECT"
+                + " id,status,stage,attempt,created_at,updated_at,deadline,parent_job_id,failure_code,batch_execution_id,resolved_config::text"
+                + " AS configuration FROM report_job WHERE id=? AND owner_subject=?",
+            id,
+            subject);
+    if (rows.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Job not found");
+    var row = rows.getFirst();
+    row.put(
+        "artifacts",
+        db.queryForList(
+            "SELECT id,sha256,size_bytes,media_type,format FROM report_artifact WHERE job_id=?"
+                + " ORDER BY format",
+            id));
+    row.put(
+        "deliveries",
+        db.queryForList(
+            "SELECT"
+                + " d.id,d.artifact_id,d.status,d.destination_ref,d.object_key,d.required,d.receipt::text,a.format"
+                + " FROM delivery_outbox d JOIN report_artifact a ON a.id=d.artifact_id WHERE"
+                + " d.job_id=? ORDER BY a.format,d.destination_ref",
+            id));
+    row.put(
+        "executions",
+        db.queryForList(
+            "SELECT e.job_execution_id,e.status,e.start_time,e.end_time,e.exit_code FROM"
+                + " batch_job_execution e JOIN batch_job_execution_params p ON"
+                + " p.job_execution_id=e.job_execution_id WHERE p.parameter_name='jobId' AND"
+                + " p.parameter_value=? ORDER BY e.job_execution_id",
+            id.toString()));
+    row.put(
+        "deliveryAttempts",
+        db.queryForList(
+            "SELECT a.delivery_id,a.number,a.phase,a.status,a.code,a.started_at,a.ended_at FROM"
+                + " delivery_attempt a JOIN delivery_outbox d ON d.id=a.delivery_id WHERE"
+                + " d.job_id=? ORDER BY a.delivery_id,a.number",
+            id));
+    row.put(
+        "outputs",
+        db.queryForList(
+            "SELECT format,required,status,failure_code FROM report_output WHERE job_id=? ORDER BY"
+                + " format",
+            id));
+    return row;
+  }
+
+  Map<String, Object> reprocessings(String subject, UUID parentId, int page) {
+    get(subject, parentId);
+    if (page < 0 || page > 10000)
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid page");
+    return Map.of(
+        "items",
+        db.queryForList(
+            "SELECT id,status,stage,attempt,created_at,updated_at,parent_job_id FROM report_job"
+                + " WHERE owner_subject=? AND parent_job_id=? ORDER BY created_at DESC,id LIMIT 20"
+                + " OFFSET ?",
+            subject,
+            parentId,
+            page * 20),
+        "total",
+        Objects.requireNonNull(
+            db.queryForObject(
+                "SELECT count(*) FROM report_job WHERE owner_subject=? AND parent_job_id=?",
+                Long.class,
+                subject,
+                parentId)),
+        "page",
+        page,
+        "pageSize",
+        20);
+  }
+
+  Map<String, Object> list(String subject, int page, String status) {
+    if (page < 0
+        || page > 10000
+        || (status != null
+            && !Set.of(
+                    "QUEUED",
+                    "RUNNING",
+                    "DELIVERING",
+                    "SUCCEEDED",
+                    "PARTIAL_SUCCESS",
+                    "FAILED",
+                    "CANCELLED")
+                .contains(status)))
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid page or status");
+    return Map.of(
+        "items",
+        db.queryForList(
+            "SELECT id,status,stage,attempt,created_at,updated_at,failure_code FROM report_job"
+                + " WHERE owner_subject=? AND (?::text IS NULL OR status=?) ORDER BY created_at"
+                + " DESC,id LIMIT 20 OFFSET ?",
+            subject,
+            status,
+            status,
+            page * 20),
+        "total",
+        Objects.requireNonNull(
+            db.queryForObject(
+                "SELECT count(*) FROM report_job WHERE owner_subject=? AND (?::text IS NULL OR"
+                    + " status=?)",
+                Long.class,
+                subject,
+                status,
+                status)),
+        "page",
+        page,
+        "pageSize",
+        20);
+  }
+
+  @Transactional
+  public void cancel(String subject, UUID id) {
+    get(subject, id);
+    int changed =
+        db.update(
+            "UPDATE report_job SET status='CANCELLED',stage='cancelled',updated_at=now() WHERE id=?"
+                + " AND owner_subject=? AND status IN ('QUEUED','RUNNING','DELIVERING')",
+            id,
+            subject);
+    if (changed == 0)
+      throw new ResponseStatusException(HttpStatus.CONFLICT, "Job is already terminal");
+    db.update(
+        "UPDATE delivery_outbox SET status='CANCELLED',updated_at=now() WHERE job_id=? AND"
+            + " status='PENDING'",
+        id);
+    db.update(
+        "UPDATE report_output SET status='CANCELLED' WHERE job_id=? AND status='PENDING'", id);
+    db.update(
+        "INSERT INTO audit_event(actor,action,resource_id) VALUES (?,'JOB_CANCELLED',?)",
+        subject,
+        id.toString());
+  }
+}

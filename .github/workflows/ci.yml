@@ -1,0 +1,42 @@
+name: verify
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24", cache: npm }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21", cache: maven }
+      - uses: actions/setup-go@v5
+        with:
+          {
+            go-version: "1.27.2",
+            cache-dependency-path: services/delivery-go/go.sum,
+          }
+      - run: npm ci
+      - run: ./scripts/check-contracts.sh
+      - run: npm run lint && npm run build
+      - run: cd services/report-core && ./mvnw -B verify
+      - run: cd services/delivery-go && go test -race ./... && go vet ./...
+      - run: ./scripts/local-env.sh
+      - run: docker compose --env-file .env.local -f infra/compose.yml up -d
+      - run: ./scripts/wait-http.sh http://localhost:8180/realms/reporting/.well-known/openid-configuration
+      - run: ./scripts/wait-http.sh http://localhost:9000/report-results
+      - run: ./scripts/wait-http.sh http://localhost:4443/storage/v1/b
+      - run: ./scripts/delivery-tests.sh
+      - run: npx playwright install --with-deps chromium
+      - name: Start applications and verify browser journey
+        run: |
+          set -a
+          source .env.local
+          set +a
+          java -jar services/report-core/target/report-core-0.1.0.jar > /tmp/core.log 2>&1 &
+          npm run start > /tmp/web.log 2>&1 &
+          ./scripts/delivery.sh > /tmp/delivery.log 2>&1 &
+          ./scripts/wait-http.sh http://localhost:8085/backend/actuator/health
+          ./scripts/wait-http.sh http://localhost:3005
+          npx playwright test

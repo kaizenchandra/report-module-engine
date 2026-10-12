@@ -1,0 +1,70 @@
+name: report-engine
+services:
+  postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_DB: report_core
+      POSTGRES_USER: report_core
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Run scripts/local-env.sh}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["postgres:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U report_core -d report_core"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.3
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_HTTP_PORT: 8180
+      KC_HOSTNAME: http://localhost:8180
+      REPORT_WEB_SECRET: ${OIDC_CLIENT_SECRET:?Run scripts/local-env.sh}
+      DELIVERY_CLIENT_SECRET: ${DELIVERY_CLIENT_SECRET:?Run scripts/local-env.sh}
+      REPORT_ADMIN_TEST_PASSWORD: ${REPORT_ADMIN_TEST_PASSWORD:?Generate a local administrator test password}
+      REPORT_TEST_PASSWORD: ${REPORT_TEST_PASSWORD:?Run scripts/local-env.sh}
+    ports: ["127.0.0.1:8180:8180"]
+    volumes: ["./keycloak:/opt/keycloak/data/import:ro"]
+  delivery-postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_DB: delivery
+      POSTGRES_USER: delivery
+      POSTGRES_PASSWORD: ${DELIVERY_DATABASE_PASSWORD:?Run scripts/local-env.sh}
+    ports: ["127.0.0.1:5433:5432"]
+    volumes: ["delivery-postgres:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U delivery -d delivery"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  s3mock:
+    image: adobe/s3mock:4.10.0
+    environment:
+      initialBuckets: report-results
+      root: /s3mockroot
+      retainFilesOnExit: "true"
+    ports: ["127.0.0.1:9000:9090"]
+    volumes: ["s3mock:/s3mockroot"]
+  gcs-emulator:
+    image: fsouza/fake-gcs-server:1.54.0
+    command:
+      [
+        "-scheme",
+        "http",
+        "-external-url",
+        "http://localhost:4443",
+        "-public-host",
+        "localhost:4443",
+        "-filesystem-root",
+        "/storage",
+        "-data",
+        "/seed",
+      ]
+    ports: ["127.0.0.1:4443:4443"]
+    volumes: ["gcs:/storage", "./gcs-seed:/seed:ro"]
+volumes:
+  gcs:
+  delivery-postgres:
+  s3mock:
+  postgres:

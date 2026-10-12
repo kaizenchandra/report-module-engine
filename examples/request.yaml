@@ -1,0 +1,8 @@
+# Same domain contract as request.json; schemaVersion is a string.
+schemaVersion: '1'
+definitionId: sales-summary
+definitionVersion: 1
+parameters:
+  title: YAML sales review
+outputs: [PDF]
+destinationRef: local-s3

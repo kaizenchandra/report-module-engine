@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "1",
+  "definitionId": "sales-summary",
+  "definitionVersion": 1,
+  "parameters": {
+    "title": "Quarterly sales review"
+  },
+  "outputs": ["PDF"],
+  "destinationRef": "local-s3"
+}

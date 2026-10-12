@@ -1,0 +1,46 @@
+server:
+  port: ${PORT:8080}
+  servlet:
+    context-path: /backend
+    session:
+      timeout: 30m
+      cookie:
+        name: REPORT_SESSION
+        path: /
+        http-only: true
+        secure: ${COOKIE_SECURE:true}
+        same-site: lax
+  shutdown: graceful
+spring:
+  application.name: report-core
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/report_core}
+    username: ${DATABASE_USER:report_core}
+    password: ${DATABASE_PASSWORD}
+    hikari.maximum-pool-size: 10
+  jackson.deserialization.fail-on-unknown-properties: true
+  jackson.deserialization.fail-on-ignored-properties: true
+  batch:
+    job.enabled: false
+    jdbc.initialize-schema: never
+  security:
+    oauth2:
+      client:
+        registration:
+          reporting:
+            provider: reporting
+            client-id: report-web
+            client-secret: ${OIDC_CLIENT_SECRET}
+            authorization-grant-type: authorization_code
+            scope: openid,profile
+            redirect-uri: ${APP_ORIGIN:http://localhost:3005}/backend/login/oauth2/code/reporting
+        provider:
+          reporting:
+            issuer-uri: ${OIDC_ISSUER:http://localhost:8180/realms/reporting}
+      resourceserver.jwt.issuer-uri: ${OIDC_ISSUER:http://localhost:8180/realms/reporting}
+management:
+  endpoints.web.exposure.include: health,info
+  endpoint.health.probes.enabled: true
+report:
+  origin: ${APP_ORIGIN:http://localhost:3005}
+  audience: report-core

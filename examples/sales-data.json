@@ -1,0 +1,10 @@
+{
+  "datasetVersion": "sample-v1",
+  "description": "Reference for the deterministic synthetic rows embedded in Renderer. No customer data.",
+  "currency": "USD",
+  "rows": [
+    { "product": "Atlas notebook", "quantity": 12, "amount": "240.00" },
+    { "product": "Cedar pen", "quantity": 30, "amount": "90.00" },
+    { "product": "Harbor planner", "quantity": 8, "amount": "160.00" }
+  ]
+}

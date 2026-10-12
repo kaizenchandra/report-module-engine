@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "2",
+  "definitionId": "sales-summary",
+  "definitionVersion": 1,
+  "parameters": {
+    "title": "Five-format sales review"
+  },
+  "outputs": ["PDF", "XLSX", "CSV", "DOCX", "HTML"],
+  "optionalOutputs": ["CSV", "HTML"],
+  "deliveries": [
+    {
+      "destinationRef": "local-s3",
+      "outputs": ["PDF", "XLSX", "DOCX"],
+      "required": true
+    },
+    {
+      "destinationRef": "local-gcs",
+      "outputs": ["PDF", "XLSX", "CSV", "DOCX", "HTML"],
+      "required": false
+    }
+  ]
+}

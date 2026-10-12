@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Service build output and local artifacts
+services/report-core/target/
+services/delivery-go/delivery
+.artifacts/
+playwright-report/
+test-results/
+!.env.example
