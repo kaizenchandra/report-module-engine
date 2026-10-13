@@ -125,6 +125,57 @@ class JobPersistenceTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void historyFiltersAreOwnerScopedStableAndBounded() throws Exception {
+    String owner = UUID.randomUUID().toString();
+    var ids = new ArrayList<UUID>();
+    for (int n = 0; n < 23; n++) {
+      UUID id =
+          (UUID) jobs.submit(owner, UUID.randomUUID().toString(), request("History")).get("id");
+      jobs.cancel(owner, id);
+      db.update(
+          "UPDATE report_job SET created_at=?::timestamptz WHERE id=?",
+          n == 22 ? "2025-02-02T00:00:00Z" : "2025-02-01T00:00:00Z",
+          id);
+      if (n < 22) ids.add(id);
+    }
+    jobs.submit("other-" + owner, UUID.randomUUID().toString(), request("Hidden"));
+    ids.sort(Comparator.comparing(UUID::toString));
+    var first =
+        jobs.list(owner, 0, "CANCELLED", "sales-summary", "2025-02-01", "2025-02-02", "oldest");
+    assertThat(first.get("total")).isEqualTo(22L);
+    var rows = (List<Map<String, Object>>) first.get("items");
+    assertThat(rows.stream().map(r -> r.get("id")).toList())
+        .containsExactlyElementsOf(ids.subList(0, 20));
+    var second =
+        jobs.list(owner, 1, "CANCELLED", "sales-summary", "2025-02-01", "2025-02-02", "oldest");
+    assertThat(
+            ((List<Map<String, Object>>) second.get("items"))
+                .stream().map(r -> r.get("id")).toList())
+        .containsExactlyElementsOf(ids.subList(20, 22));
+    var newest = jobs.list(owner, 0, null, null, "2025-02-01", "2025-02-02", "newest");
+    assertThat(((List<Map<String, Object>>) newest.get("items")).getFirst().get("id"))
+        .isEqualTo(ids.getLast());
+    assertThat(jobs.list(owner, 0, null, "missing", null, null, "newest").get("total"))
+        .isEqualTo(0L);
+    assertThat(jobs.list(owner, 0, "QUEUED", null, null, null, "newest").get("total"))
+        .isEqualTo(0L);
+    assertThat(jobs.list(owner, 0, null, null, null, null, "newest").get("total")).isEqualTo(23L);
+    for (String invalid : List.of("2025-02-29", "2025-1-01", "0000-01-01", "2025-01-01T00:00Z"))
+      assertThatThrownBy(() -> jobs.list(owner, 0, null, null, invalid, null, "newest"))
+          .hasMessageContaining("400");
+    assertThatThrownBy(() -> jobs.list(owner, 0, null, null, "2025-02-02", "2025-02-01", "newest"))
+        .hasMessageContaining("400");
+    assertThatThrownBy(
+            () -> jobs.list(owner, 0, null, null, null, null, "id; DROP TABLE report_job"))
+        .hasMessageContaining("400");
+    assertThatThrownBy(() -> jobs.list(owner, 0, null, "' OR true --", null, null, "newest"))
+        .hasMessageContaining("400");
+    assertThatThrownBy(() -> jobs.list(owner, 10001, null, null, null, null, "newest"))
+        .hasMessageContaining("400");
+  }
+
+  @Test
   void auditCannotBeUpdated() {
     db.update(
         "INSERT INTO audit_event(actor,action,resource_id) VALUES ('test','TEST','audit-guard')");

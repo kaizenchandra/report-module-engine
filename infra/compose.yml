@@ -13,6 +13,20 @@ services:
       interval: 3s
       timeout: 3s
       retries: 30
+  jdbc-postgres:
+    image: postgres:17.6
+    environment:
+      POSTGRES_DB: report_input
+      POSTGRES_USER: input_admin
+      POSTGRES_PASSWORD: ${JDBC_DATABASE_PASSWORD:?Run scripts/local-env.sh}
+      REPORT_JDBC_PASSWORD: ${REPORT_JDBC_PASSWORD:?Run scripts/local-env.sh}
+    ports: ["127.0.0.1:5434:5432"]
+    volumes: ["jdbc-postgres:/var/lib/postgresql/data", "./jdbc-seed:/docker-entrypoint-initdb.d:ro"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U input_admin -d report_input"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
   keycloak:
     image: quay.io/keycloak/keycloak:26.7.3
     command: ["start-dev", "--import-realm"]
@@ -64,6 +78,7 @@ services:
     ports: ["127.0.0.1:4443:4443"]
     volumes: ["gcs:/storage", "./gcs-seed:/seed:ro"]
 volumes:
+  jdbc-postgres:
   gcs:
   delivery-postgres:
   s3mock:

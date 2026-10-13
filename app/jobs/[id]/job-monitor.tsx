@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import Reprocessing from "./reprocessing";
+import PdfPreview from "./pdf-preview";
 import CloudOperation from "@/app/components/cloud-operation";
 import { useEffect, useState } from "react";
 import type { components } from "@/lib/api.generated";
@@ -187,6 +188,9 @@ export default function JobMonitor({
               >
                 Download {a.format}
               </a>
+              {a.format === "PDF" && (
+                <PdfPreview jobId={job.id} artifactId={a.id} />
+              )}
             </div>
           ))
         ) : (

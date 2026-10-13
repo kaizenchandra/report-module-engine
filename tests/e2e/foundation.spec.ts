@@ -19,6 +19,12 @@ test("OIDC browser login reaches protected database-backed catalog", async ({
     page.getByRole("heading", { name: "Workspace overview" }),
   ).toBeVisible();
   await page.getByRole("link", { name: "Browse report catalog" }).click();
+  await page
+    .getByRole("searchbox", { name: "Search definitions" })
+    .fill("sales-summary");
+  await page
+    .getByRole("button", { name: "Search catalog", exact: true })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Sales summary" }),
   ).toBeVisible();

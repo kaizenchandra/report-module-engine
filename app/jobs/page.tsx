@@ -3,12 +3,26 @@ import { core, type JobPage } from "@/lib/api";
 export default async function Jobs({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string; status?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const query = await searchParams;
+  const raw = await searchParams;
+  const query = Object.fromEntries(
+    Object.entries(raw).map(([key, value]) => [
+      key,
+      Array.isArray(value) ? value[0] : value,
+    ]),
+  );
   const page = Number(query.page ?? 0);
   const params = new URLSearchParams({ page: String(page) });
-  if (query.status) params.set("status", query.status);
+  for (const key of [
+    "status",
+    "definitionId",
+    "acceptedFrom",
+    "acceptedBefore",
+    "sort",
+  ]) {
+    if (query[key]) params.set(key, query[key]);
+  }
   const result = await core<JobPage>(`/jobs?${params}`);
   return (
     <>
@@ -20,7 +34,8 @@ export default async function Jobs({
         </Link>
       </div>
       <p className="intro">
-        Your durable report requests, newest first. All timestamps in UTC.
+        Your durable report requests. Date filters use midnight UTC; the end
+        date is exclusive.
       </p>
       <form className="filters">
         <label>
@@ -40,7 +55,40 @@ export default async function Jobs({
             ))}
           </select>
         </label>
+        <label>
+          Definition ID
+          <input
+            name="definitionId"
+            maxLength={64}
+            defaultValue={query.definitionId ?? ""}
+            placeholder="All definitions"
+          />
+        </label>
+        <label>
+          Accepted from (UTC)
+          <input
+            type="date"
+            name="acceptedFrom"
+            defaultValue={query.acceptedFrom ?? ""}
+          />
+        </label>
+        <label>
+          Accepted before (UTC)
+          <input
+            type="date"
+            name="acceptedBefore"
+            defaultValue={query.acceptedBefore ?? ""}
+          />
+        </label>
+        <label>
+          Sort
+          <select name="sort" defaultValue={query.sort ?? "newest"}>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+          </select>
+        </label>
         <button>Apply filters</button>
+        <Link href="/jobs">Clear filters</Link>
       </form>
       {!result.data ? (
         <section className="panel" role="alert">

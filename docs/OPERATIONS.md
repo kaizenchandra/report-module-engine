@@ -110,3 +110,37 @@ V16 requires a coordinated core upgrade: stop old renderer instances before acce
 The submission form and JSON/YAML parameters support locale en-US/de-DE/fr-FR and timeZone UTC/Asia/Kolkata/America/New_York/Europe/Berlin. Defaults remain en-US/UTC and old idempotency fingerprints are preserved when settings are omitted. The accepted configuration shows the resolved values; reprocessing retains the request settings. Unsupported values are rejected.
 
 Settings affect format-aware Jasper fields, not static captions, currency units or hard-coded expressions. The bundled sample has a static USD/UTC caption and no date field; use a trusted date-aware template for zone-specific presentation. Operations timestamps remain UTC. Upgrade all core workers before admitting these request fields; no database or Go rollout is needed. See [ADR-010](adr/010-locale-time-zone-settings.md).
+
+## Job history filtering
+
+`GET /api/v1/jobs` remains scoped to the authenticated owner, including administrators. Optional `definitionId` selects the exact ID in the immutable accepted request, so retired definitions remain searchable. `acceptedFrom` includes midnight UTC; `acceptedBefore` excludes midnight UTC. Both use valid four-digit `YYYY-MM-DD` dates (years 0001–9999); a supplied end must follow the start. Omit unused filters. `sort=newest` (default) and `sort=oldest` order by acceptance timestamp and UUID in the same direction. Status filtering remains available.
+
+The Jobs form creates shareable URLs and preserves filters through pagination; applying filters resets to page zero. Pages contain up to 20 owner-visible rows and page numbers are bounded to 0–10000. Count and rows use a read-only repeatable-read transaction. Each request observes current state: offset pages can shift if jobs arrive or status membership changes between requests. This is not a frozen export or cursor snapshot.
+
+V17 adds owner/time and owner/accepted-definition/time indexes. It is additive and compatible with prior application binaries; rollback the application without dropping indexes or rewriting prior migrations. Index creation takes a table lock during migration; large installations need an approved maintenance window or a separately planned online-index rollout. Query latency at production history volumes remains unbenchmarked. No secrets, template contents or report data are searched or returned in history summaries.
+
+## PostgreSQL snapshot source
+
+Run `./scripts/local-env.sh` and `docker compose --env-file .env.local -f infra/compose.yml up -d` to add the isolated synthetic source on localhost:5434. Restart core to load the generated profile. Existing environment values are preserved. Sign in as operator, open Data sources, test the JDBC connection, and import category `stationery` (two rows) or `equipment` (one row). Bind the returned snapshot to a definition and submit normally. Imported rows remain stable if the source changes or goes offline.
+
+The deployment settings are `REPORT_JDBC_HOST` (empty disables), `REPORT_JDBC_PORT` (5432), `REPORT_JDBC_DATABASE` (`report_input`), `REPORT_JDBC_USERNAME` (`report_reader`), `REPORT_JDBC_PASSWORD` (secret), and `REPORT_JDBC_SSL_MODE` (`verify-full`, or explicit local-only `disable`). `JDBC_DATABASE_PASSWORD` belongs only to the local fixture bootstrap account and is never used by the adapter. Keep it out of core production deployment. The driver uses the standard PostgreSQL trust configuration for verify-full; production certificate validation has not been exercised.
+
+After 503, inspect operator-controlled network access, reader grants, table shape and source availability without enabling sensitive driver debug logs. 429 means both per-process JDBC slots are occupied. 400 indicates invalid input or rejected rows; 422 indicates unsupported column types. The UI offers no automatic retry: inspect import history after a lost response, then decide whether to read a fresh snapshot. See [ADR-011](adr/011-jdbc-snapshot-adapter.md) for transaction, deduplication, deadlines, migration/rollback and credential rotation limits.
+
+## Definition catalog search
+
+The Report catalog uses `GET /api/v1/definition-catalog` with `q`, `status`, `sort` and `page`. Search is a case-insensitive literal substring of the current definition ID, name or description. Leading/trailing whitespace is ignored; at most 100 characters and no control characters are accepted. `%` and `_` are literal characters, not SQL wildcards. This is not full-text, fuzzy or historical-version search. Case folding follows PostgreSQL's database locale.
+
+Status is `all` (default), `enabled` or `disabled`. Ordering is `name` (case-folded name then ID) or `updated` (latest head update then ID descending). Results contain up to 20 definitions, with zero-based pages bounded to 10000. Count and rows share a read-only repeatable-read snapshot for each request. Concurrent edits can move results between separate offset-page requests; the catalog is not a frozen export. Only authenticated reporting identities can query it; visibility is workspace-wide, matching the existing definition policy.
+
+Search, filters, sort and pages are shareable URLs. Applying filters resets pagination. When arriving from template upload or source import, valid-shape template/source references survive filtering, pagination and clearing filters as editable creation-form defaults. This does not authorize a reference or bypass existence checks on registration. Unsaved form fields are not serialized into shared URLs. Version history and pinned-generation links retain their existing semantics.
+
+`GET /api/v1/definitions` keeps its legacy array response for existing consumers and the submission selector. That endpoint remains unpaginated; migrating the selector and retiring the legacy list require a separate compatibility increment. The new route avoids reserving a previously valid definition ID such as `catalog`.
+
+V19 adds current-name and update-time indexes without changing earlier migrations. Application rollback can retain these additive indexes. Index creation requires a deployment maintenance plan for large tables; substring search and count may scan matching catalog data, and production-scale latency has not been benchmarked.
+
+## PDF preview
+
+Generate PDF through the normal submission path, then open job details → Preview PDF. Cloud delivery settings still apply to the job; the preview action itself does not regenerate or upload it. Other formats retain download-only access. Preview metadata reports total pages; navigation exposes up to the first 20 at 96 DPI. Download the original for remaining pages, selectable text, or pages too large to preview.
+
+A preview 404 means the job/artifact is not available to the signed-in owner; administrator role alone does not bypass ownership. 410 means retention removed the file; 409 means saved size/checksum no longer matches and requires operator investigation. 422 indicates an unreadable PDF or exceeded page/image limits. A 429 can be retried after preview capacity frees. Browser timeout/retry does not alter the report's status or restart Batch. Two operations per core process, bounded pixels and byte counts limit ordinary use; hard parser time/memory isolation and production load validation remain open. See [ADR-012](adr/012-retained-pdf-preview.md).

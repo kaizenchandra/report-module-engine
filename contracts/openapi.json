@@ -144,6 +144,46 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "definitionId",
+            "description": "Exact accepted definition ID, including retired definitions.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+            }
+          },
+          {
+            "in": "query",
+            "name": "acceptedFrom",
+            "description": "Inclusive UTC midnight, YYYY-MM-DD.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "acceptedBefore",
+            "description": "Exclusive UTC midnight, YYYY-MM-DD; must follow acceptedFrom.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "description": "Timestamp and UUID in the same direction.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "newest",
+                "oldest"
+              ],
+              "default": "newest"
+            }
           }
         ],
         "responses": {
@@ -162,8 +202,12 @@
           },
           "403": {
             "description": "Permission or CSRF failure"
+          },
+          "400": {
+            "description": "Invalid filters"
           }
-        }
+        },
+        "description": "Owner-scoped history. UTC date interval is inclusive from, exclusive before. Stable timestamp/ID order; offset pages may shift between requests as jobs arrive. Count and items share a database snapshot."
       },
       "post": {
         "parameters": [
@@ -355,7 +399,10 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["id", "configuration"],
+                "required": [
+                  "id",
+                  "configuration"
+                ],
                 "properties": {
                   "id": {
                     "type": "string",
@@ -405,7 +452,9 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["enabled"],
+                "required": [
+                  "enabled"
+                ],
                 "properties": {
                   "enabled": {
                     "type": "boolean"
@@ -436,7 +485,10 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["expectedVersion", "configuration"],
+                "required": [
+                  "expectedVersion",
+                  "configuration"
+                ],
                 "properties": {
                   "expectedVersion": {
                     "type": "integer",
@@ -730,7 +782,10 @@
             "required": true,
             "schema": {
               "type": "string",
-              "enum": ["json", "yaml"]
+              "enum": [
+                "json",
+                "yaml"
+              ]
             }
           }
         ],
@@ -1329,6 +1384,378 @@
           }
         }
       }
+    },
+    "/api/v1/jdbc-source": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JdbcProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Administrator permission or CSRF failure"
+          },
+          "429": {
+            "description": "Adapter concurrency limit"
+          },
+          "503": {
+            "description": "Unconfigured or unavailable source; errors redacted"
+          }
+        }
+      }
+    },
+    "/api/v1/jdbc-source/check": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JdbcCheck"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Administrator permission or CSRF failure"
+          },
+          "429": {
+            "description": "Adapter concurrency limit"
+          },
+          "503": {
+            "description": "Unconfigured or unavailable source; errors redacted"
+          }
+        }
+      }
+    },
+    "/api/v1/jdbc-source/imports": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StructuredSource"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Administrator permission or CSRF failure"
+          },
+          "429": {
+            "description": "Adapter concurrency limit"
+          },
+          "503": {
+            "description": "Unconfigured or unavailable source; errors redacted"
+          },
+          "201": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StructuredSource"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unsupported JDBC column types"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JdbcImportRequest"
+              }
+            }
+          }
+        },
+        "description": "Administrator-only bounded snapshot import from deployment profile. Repeated imports query current source rows; identical contents deduplicate. Not a job submission or idempotent refresh. Query and credentials are never caller supplied."
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JdbcImport"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Administrator permission or CSRF failure"
+          },
+          "429": {
+            "description": "Adapter concurrency limit"
+          },
+          "503": {
+            "description": "Unconfigured or unavailable source; errors redacted"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000,
+              "default": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/definition-catalog": {
+      "get": {
+        "description": "Authenticated workspace catalog. Case-insensitive literal substring search across current ID/name/description; surrounding whitespace ignored. Count and items share a database snapshot. Offset pages can shift between requests when definitions change. Existing GET /definitions retains its array contract.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000,
+              "default": 0
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "default": ""
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "enabled",
+                "disabled"
+              ],
+              "default": "all"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "name",
+                "updated"
+              ],
+              "default": "name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching current definitions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Reporting permission required"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/outputs/{artifactId}/preview": {
+      "get": {
+        "description": "Read-only preview of an already generated artifact. Does not generate or upload reports. First 20 pages, 96 DPI, 2000 pixels/side, 2 million pixels/page, 4 MiB PNG. Authorization and SHA-256 verified on every request.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "artifactId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Page outside preview range"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Job or artifact unavailable to owner"
+          },
+          "409": {
+            "description": "Retained artifact integrity failure"
+          },
+          "410": {
+            "description": "Artifact no longer retained"
+          },
+          "415": {
+            "description": "Only PDF is supported"
+          },
+          "422": {
+            "description": "PDF or page exceeds preview limits"
+          },
+          "429": {
+            "description": "Preview capacity busy"
+          },
+          "200": {
+            "description": "Owner-authorized preview metadata, no-store",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PdfPreview"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Reporting permission required"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/outputs/{artifactId}/preview/pages/{page}": {
+      "get": {
+        "description": "Read-only preview of an already generated artifact. Does not generate or upload reports. First 20 pages, 96 DPI, 2000 pixels/side, 2 million pixels/page, 4 MiB PNG. Authorization and SHA-256 verified on every request.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "artifactId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "page",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 19
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Page outside preview range"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Job or artifact unavailable to owner"
+          },
+          "409": {
+            "description": "Retained artifact integrity failure"
+          },
+          "410": {
+            "description": "Artifact no longer retained"
+          },
+          "415": {
+            "description": "Only PDF is supported"
+          },
+          "422": {
+            "description": "PDF or page exceeds preview limits"
+          },
+          "429": {
+            "description": "Preview capacity busy"
+          },
+          "200": {
+            "description": "Owner-authorized retained PDF page, no-store",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Reporting permission required"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1385,10 +1812,16 @@
             "type": "integer"
           },
           "failure_code": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "batch_execution_id": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "configuration": {
             "type": "string"
@@ -1419,7 +1852,13 @@
                 },
                 "format": {
                   "type": "string",
-                  "enum": ["PDF", "XLSX", "CSV", "DOCX", "HTML"]
+                  "enum": [
+                    "PDF",
+                    "XLSX",
+                    "CSV",
+                    "DOCX",
+                    "HTML"
+                  ]
                 }
               }
             }
@@ -1451,7 +1890,10 @@
                   "type": "string"
                 },
                 "receipt": {
-                  "type": ["string", "null"]
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "artifact_id": {
                   "type": "string",
@@ -1459,7 +1901,13 @@
                 },
                 "format": {
                   "type": "string",
-                  "enum": ["PDF", "XLSX", "CSV", "DOCX", "HTML"]
+                  "enum": [
+                    "PDF",
+                    "XLSX",
+                    "CSV",
+                    "DOCX",
+                    "HTML"
+                  ]
                 },
                 "required": {
                   "type": "boolean"
@@ -1486,13 +1934,22 @@
                   "type": "string"
                 },
                 "start_time": {
-                  "type": ["string", "null"]
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "end_time": {
-                  "type": ["string", "null"]
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "exit_code": {
-                  "type": ["string", "null"]
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               }
             }
@@ -1527,7 +1984,10 @@
                   "type": "string"
                 },
                 "ended_at": {
-                  "type": ["string", "null"]
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "delivery_id": {
                   "type": "string",
@@ -1540,27 +2000,48 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["format", "required", "status"],
+              "required": [
+                "format",
+                "required",
+                "status"
+              ],
               "properties": {
                 "format": {
                   "type": "string",
-                  "enum": ["PDF", "XLSX", "CSV", "DOCX", "HTML"]
+                  "enum": [
+                    "PDF",
+                    "XLSX",
+                    "CSV",
+                    "DOCX",
+                    "HTML"
+                  ]
                 },
                 "required": {
                   "type": "boolean"
                 },
                 "status": {
                   "type": "string",
-                  "enum": ["PENDING", "AVAILABLE", "FAILED", "CANCELLED"]
+                  "enum": [
+                    "PENDING",
+                    "AVAILABLE",
+                    "FAILED",
+                    "CANCELLED"
+                  ]
                 },
                 "failure_code": {
-                  "type": ["string", "null"]
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               }
             }
           },
           "parent_job_id": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "uuid"
           },
           "deadline": {
@@ -1571,7 +2052,12 @@
       },
       "JobPage": {
         "type": "object",
-        "required": ["items", "page", "pageSize", "total"],
+        "required": [
+          "items",
+          "page",
+          "pageSize",
+          "total"
+        ],
         "properties": {
           "items": {
             "type": "array",
@@ -1592,7 +2078,12 @@
       },
       "Identity": {
         "type": "object",
-        "required": ["subject", "roles", "csrfToken", "csrfHeader"],
+        "required": [
+          "subject",
+          "roles",
+          "csrfToken",
+          "csrfHeader"
+        ],
         "properties": {
           "subject": {
             "type": "string"
@@ -1652,13 +2143,20 @@
       },
       "Summary": {
         "type": "object",
-        "required": ["counts", "timezone", "locale"],
+        "required": [
+          "counts",
+          "timezone",
+          "locale"
+        ],
         "properties": {
           "counts": {
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["status", "count"],
+              "required": [
+                "status",
+                "count"
+              ],
               "properties": {
                 "status": {
                   "type": "string"
@@ -1679,7 +2177,10 @@
       },
       "Problem": {
         "type": "object",
-        "required": ["status", "title"],
+        "required": [
+          "status",
+          "title"
+        ],
         "properties": {
           "status": {
             "type": "integer"
@@ -1709,7 +2210,10 @@
           },
           "provider": {
             "type": "string",
-            "enum": ["S3", "GCS"]
+            "enum": [
+              "S3",
+              "GCS"
+            ]
           },
           "bucket": {
             "type": "string"
@@ -1724,18 +2228,29 @@
             "type": "integer"
           },
           "last_verified_delivery": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
       "DestinationConfiguration": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["provider", "bucket", "prefix", "enabled"],
+        "required": [
+          "provider",
+          "bucket",
+          "prefix",
+          "enabled"
+        ],
         "properties": {
           "provider": {
             "type": "string",
-            "enum": ["S3", "GCS"]
+            "enum": [
+              "S3",
+              "GCS"
+            ]
           },
           "bucket": {
             "type": "string",
@@ -1765,7 +2280,10 @@
         "properties": {
           "provider": {
             "type": "string",
-            "enum": ["S3", "GCS"]
+            "enum": [
+              "S3",
+              "GCS"
+            ]
           },
           "bucket": {
             "type": "string"
@@ -1807,17 +2325,28 @@
           },
           "kind": {
             "type": "string",
-            "enum": ["CHECK", "SIGN"]
+            "enum": [
+              "CHECK",
+              "SIGN"
+            ]
           },
           "resource_id": {
             "type": "string"
           },
           "resource_version": {
-            "type": ["integer", "null"]
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "status": {
             "type": "string",
-            "enum": ["PENDING", "SUCCEEDED", "FAILED", "EXPIRED"]
+            "enum": [
+              "PENDING",
+              "SUCCEEDED",
+              "FAILED",
+              "EXPIRED"
+            ]
           },
           "code": {
             "type": "string"
@@ -1852,7 +2381,9 @@
         "properties": {
           "schemaVersion": {
             "type": "string",
-            "enum": ["1"]
+            "enum": [
+              "1"
+            ]
           },
           "definitionId": {
             "type": "string",
@@ -1866,7 +2397,9 @@
           "parameters": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["title"],
+            "required": [
+              "title"
+            ],
             "properties": {
               "title": {
                 "type": "string",
@@ -1875,12 +2408,23 @@
                 "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$"
               },
               "locale": {
-                "type": ["string", "null"],
-                "enum": ["en-US", "de-DE", "fr-FR", null],
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "en-US",
+                  "de-DE",
+                  "fr-FR",
+                  null
+                ],
                 "default": "en-US"
               },
               "timeZone": {
-                "type": ["string", "null"],
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "enum": [
                   "UTC",
                   "Asia/Kolkata",
@@ -1898,7 +2442,13 @@
             "maxItems": 1,
             "items": {
               "type": "string",
-              "enum": ["PDF", "XLSX", "CSV", "DOCX", "HTML"]
+              "enum": [
+                "PDF",
+                "XLSX",
+                "CSV",
+                "DOCX",
+                "HTML"
+              ]
             },
             "uniqueItems": true
           },
@@ -1922,7 +2472,9 @@
         "properties": {
           "schemaVersion": {
             "type": "string",
-            "enum": ["2"]
+            "enum": [
+              "2"
+            ]
           },
           "definitionId": {
             "type": "string",
@@ -1936,7 +2488,9 @@
           "parameters": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["title"],
+            "required": [
+              "title"
+            ],
             "properties": {
               "title": {
                 "type": "string",
@@ -1945,12 +2499,23 @@
                 "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$"
               },
               "locale": {
-                "type": ["string", "null"],
-                "enum": ["en-US", "de-DE", "fr-FR", null],
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "en-US",
+                  "de-DE",
+                  "fr-FR",
+                  null
+                ],
                 "default": "en-US"
               },
               "timeZone": {
-                "type": ["string", "null"],
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "enum": [
                   "UTC",
                   "Asia/Kolkata",
@@ -1968,7 +2533,13 @@
             "maxItems": 5,
             "items": {
               "type": "string",
-              "enum": ["PDF", "XLSX", "CSV", "DOCX", "HTML"]
+              "enum": [
+                "PDF",
+                "XLSX",
+                "CSV",
+                "DOCX",
+                "HTML"
+              ]
             },
             "uniqueItems": true
           },
@@ -1978,7 +2549,13 @@
             "uniqueItems": true,
             "items": {
               "type": "string",
-              "enum": ["PDF", "XLSX", "CSV", "DOCX", "HTML"]
+              "enum": [
+                "PDF",
+                "XLSX",
+                "CSV",
+                "DOCX",
+                "HTML"
+              ]
             }
           },
           "deliveries": {
@@ -1988,7 +2565,11 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["destinationRef", "outputs", "required"],
+              "required": [
+                "destinationRef",
+                "outputs",
+                "required"
+              ],
               "properties": {
                 "destinationRef": {
                   "type": "string",
@@ -2000,7 +2581,13 @@
                   "maxItems": 5,
                   "items": {
                     "type": "string",
-                    "enum": ["PDF", "XLSX", "CSV", "DOCX", "HTML"]
+                    "enum": [
+                      "PDF",
+                      "XLSX",
+                      "CSV",
+                      "DOCX",
+                      "HTML"
+                    ]
                   },
                   "uniqueItems": true
                 },
@@ -2015,14 +2602,21 @@
       },
       "ConfigurationConversion": {
         "type": "object",
-        "required": ["configuration", "mediaType", "request"],
+        "required": [
+          "configuration",
+          "mediaType",
+          "request"
+        ],
         "properties": {
           "configuration": {
             "type": "string"
           },
           "mediaType": {
             "type": "string",
-            "enum": ["application/json", "application/yaml"]
+            "enum": [
+              "application/json",
+              "application/yaml"
+            ]
           },
           "request": {
             "$ref": "#/components/schemas/ReportRequest"
@@ -2032,7 +2626,12 @@
       "DefinitionConfiguration": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "description", "templateResource", "enabled"],
+        "required": [
+          "name",
+          "description",
+          "templateResource",
+          "enabled"
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -2052,7 +2651,10 @@
             "type": "boolean"
           },
           "dataSourceRef": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "pattern": "^(sample-v1|data:[0-9a-f]{64})$",
             "default": "sample-v1"
           }
@@ -2061,7 +2663,10 @@
       "DefinitionCreate": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "configuration"],
+        "required": [
+          "id",
+          "configuration"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -2075,7 +2680,10 @@
       "DefinitionReplace": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["expectedVersion", "configuration"],
+        "required": [
+          "expectedVersion",
+          "configuration"
+        ],
         "properties": {
           "expectedVersion": {
             "type": "integer",
@@ -2089,7 +2697,12 @@
       },
       "RegisteredTemplate": {
         "type": "object",
-        "required": ["sha256", "name", "compiler_version", "created_at"],
+        "required": [
+          "sha256",
+          "name",
+          "compiler_version",
+          "created_at"
+        ],
         "properties": {
           "sha256": {
             "type": "string",
@@ -2110,7 +2723,11 @@
       "TemplateRegistration": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "jrxml", "trustedCodeAcknowledged"],
+        "required": [
+          "name",
+          "jrxml",
+          "trustedCodeAcknowledged"
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -2125,7 +2742,9 @@
           },
           "trustedCodeAcknowledged": {
             "type": "boolean",
-            "enum": [true]
+            "enum": [
+              true
+            ]
           }
         }
       },
@@ -2158,7 +2777,12 @@
       },
       "StructuredSource": {
         "type": "object",
-        "required": ["sha256", "name", "row_count", "created_at"],
+        "required": [
+          "sha256",
+          "name",
+          "row_count",
+          "created_at"
+        ],
         "properties": {
           "sha256": {
             "type": "string",
@@ -2179,7 +2803,10 @@
       "StructuredSourceRegistration": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "rows"],
+        "required": [
+          "name",
+          "rows"
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -2194,7 +2821,11 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["product", "quantity", "amount"],
+              "required": [
+                "product",
+                "quantity",
+                "amount"
+              ],
               "properties": {
                 "product": {
                   "type": "string",
@@ -2214,6 +2845,157 @@
                 }
               }
             }
+          }
+        }
+      },
+      "JdbcProfile": {
+        "type": "object",
+        "required": [
+          "id",
+          "adapter",
+          "configured"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "sales-jdbc"
+            ]
+          },
+          "adapter": {
+            "type": "string",
+            "enum": [
+              "postgres-sales-v1"
+            ]
+          },
+          "configured": {
+            "type": "boolean"
+          }
+        }
+      },
+      "JdbcImportRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "category"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9 _-]*$"
+          }
+        }
+      },
+      "JdbcCheck": {
+        "type": "object",
+        "required": [
+          "status",
+          "checkedAt"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "AVAILABLE"
+            ]
+          },
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "JdbcImport": {
+        "type": "object",
+        "required": [
+          "id",
+          "source_sha256",
+          "profile_ref",
+          "adapter_version",
+          "category",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source_sha256": {
+            "type": "string"
+          },
+          "profile_ref": {
+            "type": "string"
+          },
+          "adapter_version": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "DefinitionPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Definition"
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "pageSize": {
+            "type": "integer",
+            "enum": [
+              20
+            ]
+          }
+        }
+      },
+      "PdfPreview": {
+        "type": "object",
+        "required": [
+          "pageCount",
+          "previewPages",
+          "dpi"
+        ],
+        "properties": {
+          "pageCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "previewPages": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "dpi": {
+            "type": "integer",
+            "enum": [
+              96
+            ]
           }
         }
       }

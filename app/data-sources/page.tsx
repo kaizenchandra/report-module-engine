@@ -2,6 +2,7 @@ import Link from "next/link";
 import { core, type Identity } from "@/lib/api";
 import type { components } from "@/lib/api.generated";
 import SourceForm from "./source-form";
+import JdbcForm from "./jdbc-form";
 export default async function Sources({
   searchParams,
 }: {
@@ -26,6 +27,14 @@ export default async function Sources({
       </section>
     );
   const admin = user.data.roles.includes("ROLE_REPORT_ADMIN");
+  const [jdbc, imports] = admin
+    ? await Promise.all([
+        core<components["schemas"]["JdbcProfile"]>("/jdbc-source"),
+        core<components["schemas"]["JdbcImport"][]>(
+          `/jdbc-source/imports?page=${page}`,
+        ),
+      ])
+    : [null, null];
   return (
     <>
       <p className="eyebrow">REPORTING INPUTS</p>
@@ -33,7 +42,8 @@ export default async function Sources({
       <p>
         Immutable structured datasets. Definitions select an exact content
         fingerprint, so later registration cannot change an accepted job&apos;s
-        rows. JDBC connections are not implemented yet.
+        rows. Administrators can also import snapshots from the
+        deployment-configured PostgreSQL sales adapter.
       </p>
       <section className="panel">
         <h2>Bundled sample</h2>
@@ -45,6 +55,47 @@ export default async function Sources({
         <SourceForm identity={user.data} />
       ) : (
         <p>Only administrators can register data sources.</p>
+      )}
+      {admin &&
+        (jdbc?.data ? (
+          <JdbcForm identity={user.data} profile={jdbc.data} />
+        ) : (
+          <p role="alert">JDBC profile unavailable. Reload to retry.</p>
+        ))}
+      {admin && (
+        <section className="panel">
+          <h2>JDBC import history</h2>
+          <p>
+            Import completion times are UTC. Repeated imports retain separate
+            provenance; identical row contents share a fingerprint.
+          </p>
+          {!imports?.data ? (
+            <p role="alert">Import history unavailable. Reload to retry.</p>
+          ) : imports.data.length === 0 ? (
+            <p>No JDBC imports on this page.</p>
+          ) : (
+            <ul>
+              {imports.data.map((item) => (
+                <li key={item.id}>
+                  {item.category} · {new Date(item.created_at).toISOString()} ·{" "}
+                  <Link
+                    href={`/definitions?dataSource=data:${item.source_sha256}`}
+                  >
+                    <code>data:{item.source_sha256}</code>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+          <nav aria-label="JDBC import pages">
+            {page > 0 && (
+              <Link href={`?page=${page - 1}`}>Newer JDBC imports</Link>
+            )}{" "}
+            {imports?.data?.length === 20 && (
+              <Link href={`?page=${page + 1}`}>Older JDBC imports</Link>
+            )}
+          </nav>
+        </section>
       )}
       <h2>Registered structured sources</h2>
       {sources.data.length === 0 && <p>No registered sources on this page.</p>}

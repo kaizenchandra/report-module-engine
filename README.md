@@ -65,7 +65,7 @@ Declarative submission supports UTF-8 JSON and restricted YAML with the same ver
 
 ## Definition administration
 
-Sign in as the local `operator` with `REPORT_ADMIN_TEST_PASSWORD` to register a definition from the report catalog, publish metadata revisions, or disable new submissions. Details expose immutable version history and exact-version generation links. Definitions use the bundled sample or an immutable registered trusted JRXML reference with the bundled sample or registered structured rows. JDBC sources and template dependency bundles are still pending. See [definition version semantics](docs/adr/006-definition-versions.md).
+Sign in as the local `operator` with `REPORT_ADMIN_TEST_PASSWORD` to register a definition from the report catalog, publish metadata revisions, or disable new submissions. Details expose immutable version history and exact-version generation links. Definitions use the bundled sample or an immutable registered trusted JRXML reference with the bundled sample or registered structured rows. A deployment-owned PostgreSQL adapter can import immutable snapshots; live JDBC execution and template dependency bundles are still pending. See [definition version semantics](docs/adr/006-definition-versions.md).
 
 Owners can use **Reprocess as new job** on terminal executions. It creates a linked execution, revalidates current resources, and regenerates outputs without altering the parent results. Reuse the same idempotency key to recover a lost API acknowledgement; the browser does this while the action page remains mounted. See [reprocessing semantics](docs/adr/007-linked-reprocessing.md).
 
@@ -74,3 +74,11 @@ The Templates screen supports standalone JRXML registration for trusted administ
 Administrators can register bounded JSON datasets from **Data sources** and bind immutable `data:` references to definition versions. Sources support typed product/quantity/amount rows; empty or malformed data is rejected. JDBC connections and arbitrary field schemas remain open. See [structured source semantics and upgrade requirements](docs/adr/009-structured-data-snapshots.md).
 
 Report requests also support bounded locale/time-zone settings through the form or JSON/YAML; see [localized example](examples/request-localized.json) and [formatting semantics](docs/adr/010-locale-time-zone-settings.md). Defaults remain en-US/UTC, and static template labels are unchanged.
+
+Job history supports exact definition/status filters, UTC date intervals and newest/oldest ordering. Filters survive URL sharing and pagination. See [history semantics and migration guidance](docs/OPERATIONS.md#job-history-filtering).
+
+Data sources now includes a PostgreSQL connection check and bounded snapshot import for administrators. The local fixture provides synthetic `stationery` and `equipment` categories. No SQL or credentials enter browser code. See [JDBC scope and security](docs/adr/011-jdbc-snapshot-adapter.md).
+
+The Report catalog now searches current definition IDs, names and descriptions, with enabled/disabled filters, stable sorting and shareable pages. Template/source selections survive catalog navigation. The existing definition-list API remains compatible; see [catalog semantics](docs/OPERATIONS.md#definition-catalog-search).
+
+Job details can preview retained PDF pages through owner-authorized PNG endpoints. Preview uses the normal generated artifact, checks its integrity and does not create another execution or upload. See [preview limits](docs/adr/012-retained-pdf-preview.md).

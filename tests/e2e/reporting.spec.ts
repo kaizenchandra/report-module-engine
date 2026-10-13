@@ -1136,3 +1136,369 @@ test("locale settings survive editor round trips and format delivered output", a
   );
   expect(job.deliveries[0].status).toBe("VERIFIED");
 });
+
+test("job history filters persist in URLs and reject invalid date ranges", async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto("/jobs");
+  await page.getByLabel("Definition ID", { exact: true }).fill("sales-summary");
+  await page.getByLabel("Accepted from (UTC)").fill("2000-01-01");
+  await page.getByLabel("Accepted before (UTC)").fill("2099-01-01");
+  await page
+    .getByRole("combobox", { name: "Sort", exact: true })
+    .selectOption("oldest");
+  await page.getByRole("button", { name: "Apply filters" }).click();
+  await expect(page).toHaveURL(/definitionId=sales-summary/);
+  await expect(page).toHaveURL(/sort=oldest/);
+  const shared = page.url();
+  await page.goto(shared);
+  await expect(page.getByLabel("Accepted from (UTC)")).toHaveValue(
+    "2000-01-01",
+  );
+  await expect(
+    page.getByRole("combobox", { name: "Sort", exact: true }),
+  ).toHaveValue("oldest");
+  const response = await page.request.get(
+    "/backend/api/v1/jobs?definitionId=sales-summary&acceptedFrom=2000-01-01&acceptedBefore=2099-01-01&sort=oldest",
+  );
+  expect(response.ok()).toBeTruthy();
+  const history = await response.json();
+  expect(history.total).toBeGreaterThan(0);
+  const first = history.items[0];
+  await expect(page.getByRole("row").nth(1)).toContainText(
+    first.id.slice(0, 8),
+  );
+  if (history.total > 20) {
+    await page.getByRole("link", { name: "Next page", exact: true }).click();
+    await expect(page).toHaveURL(/page=1/);
+    await expect(page).toHaveURL(/definitionId=sales-summary/);
+    await expect(page).toHaveURL(/acceptedFrom=2000-01-01/);
+    await expect(page).toHaveURL(/sort=oldest/);
+  }
+  await page
+    .getByLabel("Definition ID", { exact: true })
+    .fill("missing-history-definition");
+  await page.getByRole("button", { name: "Apply filters" }).click();
+  await expect(page.getByText("No jobs match these filters.")).toBeVisible();
+  await page.getByLabel("Accepted before (UTC)").fill("1999-01-01");
+  await page.getByRole("button", { name: "Apply filters" }).click();
+  await expect(
+    page.getByText("Unable to load jobs. Check filters or retry."),
+  ).toBeVisible();
+  const invalid = await page.request.get(
+    "/backend/api/v1/jobs?acceptedFrom=2025-02-29",
+  );
+  expect(invalid.status()).toBe(400);
+  await page.getByRole("link", { name: "Clear filters" }).click();
+  await expect(page).toHaveURL(/\/jobs$/);
+  await expect(
+    page.getByRole("heading", { name: "Report jobs" }),
+  ).toBeVisible();
+  await expect(page).toHaveTitle("Report Engine");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
+test("JDBC connection check and snapshot import drive a verified report", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await login(page, "operator");
+  await page.goto("/data-sources");
+  const form = page.getByRole("group", { name: "JDBC snapshot configuration" });
+  await form.getByRole("button", { name: "Test JDBC connection" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "Connection and supported columns verified",
+  );
+  await form.getByLabel("Snapshot name").fill("Browser JDBC snapshot");
+  await form.getByLabel("Sales category").fill("missing-category");
+  await form
+    .getByRole("button", { name: "Import snapshot", exact: true })
+    .click();
+  await expect(page.getByText(/Invalid structured data/)).toBeVisible();
+  await form.getByLabel("Sales category").fill("stationery");
+  await expect(page).toHaveTitle("Report Engine");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await form
+    .getByRole("button", { name: "Import snapshot", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/definitions\?dataSource=data:[0-9a-f]{64}$/);
+  const reference = new URL(page.url()).searchParams.get("dataSource")!;
+  const definition = page.getByRole("group", {
+    name: "Definition configuration",
+  });
+  await expect(definition.getByLabel("Data source reference")).toHaveValue(
+    reference,
+  );
+  const id = `browser-jdbc-${randomUUID()}`;
+  await definition.getByLabel("Definition ID").fill(id);
+  await definition.getByLabel("Definition name").fill("Browser JDBC rows");
+  await definition
+    .getByRole("button", { name: "Register definition", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/definitions/${id}$`));
+  await page
+    .getByRole("link", { name: "Generate version 1", exact: true })
+    .click();
+  await page.getByLabel("Output format").selectOption("CSV");
+  await page.getByLabel("Cloud destination").selectOption("local-gcs");
+  await page
+    .getByRole("button", { name: "Submit report", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("status")).toHaveText("SUCCEEDED", {
+    timeout: 60000,
+  });
+  const job = await (
+    await page.request.get(
+      `/backend/api/v1/jobs/${page.url().split("/").at(-1)}`,
+    )
+  ).json();
+  expect(JSON.parse(job.configuration).datasetVersion).toBe(reference);
+  const output = await page.request.get(
+    `/backend/api/v1/jobs/${job.id}/outputs/${job.artifacts[0].id}`,
+  );
+  const bytes = await output.body();
+  expect(bytes.toString()).toContain("JDBC amber journal");
+  expect(bytes.toString()).toContain("84.25");
+  expect(bytes.toString()).toContain("JDBC cobalt pencil");
+  expect(bytes.toString()).not.toContain("JDBC desk lamp");
+  expect(bytes.toString()).not.toContain("Atlas notebook");
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+    job.artifacts[0].sha256,
+  );
+  expect(job.deliveries[0].status).toBe("VERIFIED");
+  await page.goto("/data-sources");
+  await expect(
+    page.getByRole("article").filter({ hasText: reference }),
+  ).toContainText("2 rows");
+  await expect(
+    page.getByRole("heading", { name: "JDBC import history" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("list").filter({ hasText: reference }),
+  ).toContainText("stationery");
+});
+
+test("catalog searches, paginates and preserves definition creation references", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await login(page, "operator");
+  const me = await (await page.request.get("/backend/api/v1/me")).json();
+  const token = `catalog-${randomUUID().slice(0, 8)}`;
+  for (let n = 0; n < 23; n++) {
+    const response = await page.request.post("/backend/api/v1/definitions", {
+      headers: { [me.csrfHeader]: me.csrfToken },
+      data: {
+        id: `${token}-${String(n).padStart(2, "0")}`,
+        configuration: {
+          name: `${token} equal`,
+          description: "Catalog browser fixture",
+          templateResource: "templates/sales-summary.jrxml",
+          enabled: n < 21,
+        },
+      },
+    });
+    expect(response.status()).toBe(201);
+  }
+  // A validated-shape reference remains an editable draft; resource existence is checked on save.
+  const template = `sha256:${"a".repeat(64)}`;
+  const source = `data:${"b".repeat(64)}`;
+  await page.goto(
+    `/definitions?${new URLSearchParams({ template, dataSource: source })}`,
+  );
+  await page
+    .getByRole("searchbox", { name: "Search definitions" })
+    .fill(token.toUpperCase());
+  await page
+    .getByRole("combobox", { name: "Definition status", exact: true })
+    .selectOption("enabled");
+  await page
+    .getByRole("button", { name: "Search catalog", exact: true })
+    .click();
+  await expect(
+    page.getByText("21 matching definitions", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("article")).toHaveCount(20);
+  await page
+    .getByRole("link", { name: "Next catalog page", exact: true })
+    .click();
+  await expect(page).toHaveURL(/page=1/);
+  expect(new URL(page.url()).searchParams.get("template")).toBe(template);
+  expect(new URL(page.url()).searchParams.get("dataSource")).toBe(source);
+  await expect(page.getByRole("article")).toHaveCount(1);
+  await expect(page.getByRole("article")).toContainText(`${token}-20`);
+  await page.reload();
+  await expect(
+    page.getByRole("searchbox", { name: "Search definitions" }),
+  ).toHaveValue(token.toUpperCase());
+  const form = page.getByRole("group", { name: "Definition configuration" });
+  await expect(form.getByLabel("Data source reference")).toHaveValue(source);
+  await expect(form.getByLabel("Template reference")).toHaveValue(template);
+  await page
+    .getByRole("combobox", { name: "Definition status", exact: true })
+    .selectOption("disabled");
+  await page
+    .getByRole("combobox", { name: "Catalog order", exact: true })
+    .selectOption("updated");
+  await page
+    .getByRole("button", { name: "Search catalog", exact: true })
+    .click();
+  await expect(
+    page.getByText("2 matching definitions", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("article").first()).toContainText(`${token}-22`);
+  await expect(
+    page.getByRole("link", { name: "Generate report →", exact: true }),
+  ).toHaveCount(0);
+  await expect(page).toHaveTitle("Report Engine");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page
+    .getByRole("searchbox", { name: "Search definitions" })
+    .fill(`${token}-missing`);
+  await page
+    .getByRole("button", { name: "Search catalog", exact: true })
+    .click();
+  await expect(
+    page.getByText("No report definitions match these filters."),
+  ).toBeVisible();
+  await page
+    .getByRole("link", { name: "Clear catalog filters", exact: true })
+    .click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search definitions" }),
+  ).toHaveValue("");
+  expect(new URL(page.url()).searchParams.get("dataSource")).toBe(source);
+  await page.goto("/definitions?sort=invalid");
+  await expect(
+    page.getByRole("heading", { name: "Catalog unavailable" }),
+  ).toBeVisible();
+});
+
+test("owner previews retained PDF pages and retries a preview failure without regeneration", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(90000);
+  await login(page, "operator");
+  const me = await (await page.request.get("/backend/api/v1/me")).json();
+  const sourceResponse = await page.request.post(
+    "/backend/api/v1/data-sources",
+    {
+      headers: { [me.csrfHeader]: me.csrfToken },
+      data: {
+        name: "Preview pages",
+        rows: Array.from({ length: 120 }, (_, n) => ({
+          product: `Preview item ${n + 1}`,
+          quantity: 1,
+          amount: 2.5,
+        })),
+      },
+    },
+  );
+  expect(sourceResponse.ok()).toBeTruthy();
+  const source = await sourceResponse.json();
+  const id = `preview-${randomUUID()}`;
+  const definition = await page.request.post("/backend/api/v1/definitions", {
+    headers: { [me.csrfHeader]: me.csrfToken },
+    data: {
+      id,
+      configuration: {
+        name: "PDF preview fixture",
+        description: "Synthetic multi-page input",
+        templateResource: "templates/sales-summary.jrxml",
+        dataSourceRef: `data:${source.sha256}`,
+        enabled: true,
+      },
+    },
+  });
+  expect(definition.status()).toBe(201);
+  await page.goto(`/jobs/new?definition=${id}&version=1`);
+  await page
+    .getByRole("button", { name: "Submit report", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("status")).toHaveText("SUCCEEDED", {
+    timeout: 60000,
+  });
+  const jobId = page.url().split("/").at(-1)!;
+  const before = await (
+    await page.request.get(`/backend/api/v1/jobs/${jobId}`)
+  ).json();
+  const artifact = before.artifacts[0];
+  const base = `/backend/api/v1/jobs/${jobId}/outputs/${artifact.id}/preview`;
+  const metadata = await (await page.request.get(base)).json();
+  expect(metadata.pageCount).toBeGreaterThan(1);
+  await page.getByRole("button", { name: "Preview PDF", exact: true }).click();
+  const region = page.getByRole("region", {
+    name: "PDF page preview",
+    exact: true,
+  });
+  const firstImage = region.getByRole("img", {
+    name: `Report PDF preview, page 1 of ${metadata.pageCount}`,
+    exact: true,
+  });
+  await expect(firstImage).toBeVisible();
+  await expect
+    .poll(() =>
+      firstImage.evaluate(
+        (element) => (element as HTMLImageElement).naturalWidth,
+      ),
+    )
+    .toBeGreaterThan(700);
+  await expect(
+    region.getByRole("button", { name: "Previous PDF page" }),
+  ).toBeDisabled();
+  let failed = false;
+  await page.route(
+    `**/outputs/${artifact.id}/preview/pages/1`,
+    async (route) => {
+      if (!failed) {
+        failed = true;
+        await route.fulfill({
+          status: 503,
+          contentType: "application/problem+json",
+          body: JSON.stringify({ detail: "Synthetic preview interruption" }),
+        });
+      } else await route.continue();
+    },
+  );
+  await region.getByRole("button", { name: "Next PDF page" }).click();
+  await expect(region.getByRole("alert")).toContainText(
+    "Synthetic preview interruption",
+  );
+  await region.getByRole("button", { name: "Retry PDF preview" }).click();
+  await expect(
+    region.getByRole("img", {
+      name: `Report PDF preview, page 2 of ${metadata.pageCount}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  const png = await page.request.get(`${base}/pages/1`);
+  expect(png.headers()["content-type"]).toBe("image/png");
+  expect(png.headers()["cache-control"]).toBe("no-store");
+  expect((await png.body()).subarray(0, 8).toString("hex")).toBe(
+    "89504e470d0a1a0a",
+  );
+  await expect(page).toHaveTitle("Report Engine");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page
+    .getByRole("button", { name: "Close PDF preview", exact: true })
+    .click();
+  await expect(region).toHaveCount(0);
+  const after = await (
+    await page.request.get(`/backend/api/v1/jobs/${jobId}`)
+  ).json();
+  expect(after.attempt).toBe(before.attempt);
+  expect(after.artifacts).toEqual(before.artifacts);
+  expect(after.deliveries).toEqual(before.deliveries);
+  const other = await browser.newPage();
+  try {
+    await login(other);
+    expect((await other.request.get(base)).status()).toBe(404);
+    expect((await other.request.get(`${base}/pages/0`)).status()).toBe(404);
+  } finally {
+    await other.close();
+  }
+});

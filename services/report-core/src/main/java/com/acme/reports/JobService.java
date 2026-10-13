@@ -236,7 +236,17 @@ public class JobService {
         20);
   }
 
-  Map<String, Object> list(String subject, int page, String status) {
+  @Transactional(
+      readOnly = true,
+      isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
+  public Map<String, Object> list(
+      String subject,
+      int page,
+      String status,
+      String definitionId,
+      String acceptedFrom,
+      String acceptedBefore,
+      String sort) {
     if (page < 0
         || page > 10000
         || (status != null
@@ -250,29 +260,64 @@ public class JobService {
                     "CANCELLED")
                 .contains(status)))
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid page or status");
-    return Map.of(
-        "items",
-        db.queryForList(
-            "SELECT id,status,stage,attempt,created_at,updated_at,failure_code FROM report_job"
-                + " WHERE owner_subject=? AND (?::text IS NULL OR status=?) ORDER BY created_at"
-                + " DESC,id LIMIT 20 OFFSET ?",
-            subject,
-            status,
-            status,
-            page * 20),
-        "total",
+    if (definitionId != null && !definitionId.matches("[a-z0-9][a-z0-9-]{0,63}"))
+      throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid definition ID");
+    String order =
+        switch (sort) {
+          case "newest" -> "created_at DESC,id DESC";
+          case "oldest" -> "created_at ASC,id ASC";
+          default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid sort");
+        };
+    var from = historyDate(acceptedFrom);
+    var before = historyDate(acceptedBefore);
+    if (from != null && before != null && !from.isBefore(before))
+      throw new ResponseStatusException(
+          HttpStatus.BAD_REQUEST, "Accepted before must follow accepted from");
+    StringBuilder where = new StringBuilder(" WHERE owner_subject=?");
+    var args = new ArrayList<Object>();
+    args.add(subject);
+    if (status != null) {
+      where.append(" AND status=?");
+      args.add(status);
+    }
+    if (definitionId != null) {
+      where.append(" AND resolved_config->'request'->>'definitionId'=?");
+      args.add(definitionId);
+    }
+    if (from != null) {
+      where.append(" AND created_at>=?");
+      args.add(from);
+    }
+    if (before != null) {
+      where.append(" AND created_at<?");
+      args.add(before);
+    }
+    long total =
         Objects.requireNonNull(
             db.queryForObject(
-                "SELECT count(*) FROM report_job WHERE owner_subject=? AND (?::text IS NULL OR"
-                    + " status=?)",
-                Long.class,
-                subject,
-                status,
-                status)),
-        "page",
-        page,
-        "pageSize",
-        20);
+                "SELECT count(*) FROM report_job" + where, Long.class, args.toArray()));
+    args.add(page * 20);
+    var items =
+        db.queryForList(
+            "SELECT id,status,stage,attempt,created_at,updated_at,failure_code FROM report_job"
+                + where
+                + " ORDER BY "
+                + order
+                + " LIMIT 20 OFFSET ?",
+            args.toArray());
+    return Map.of("items", items, "total", total, "page", page, "pageSize", 20);
+  }
+
+  private static java.time.OffsetDateTime historyDate(String value) {
+    if (value == null) return null;
+    try {
+      if (!value.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}") || value.startsWith("0000"))
+        throw new IllegalArgumentException();
+      return java.time.LocalDate.parse(value).atStartOfDay().atOffset(java.time.ZoneOffset.UTC);
+    } catch (IllegalArgumentException | java.time.DateTimeException e) {
+      throw new ResponseStatusException(
+          HttpStatus.BAD_REQUEST, "History dates must be valid YYYY-MM-DD UTC dates");
+    }
   }
 
   @Transactional

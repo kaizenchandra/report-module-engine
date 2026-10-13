@@ -31,3 +31,11 @@ SnakeYAML **2.4**, already managed/resolved by Spring Boot 3.5.16, is now a dire
 ## Trusted-template registration
 
 No dependency changes. Java 21 JAXP hardening and pinned JasperReports 7.0.3 compile/fill/export were exercised with retained registered source and a cold compiled cache. Official API/security references and the distinction between XML protections and executable-code trust are recorded in [ADR-008](adr/008-trusted-template-registration.md). Browser verification used the installed Playwright 1.58.2 CLI directly after the local `.bin` launcher was missing; no runner upgrade was adopted.
+
+## JDBC snapshot adapter
+
+Reuses pgJDBC **42.7.11**, resolved and pinned by the existing Boot **3.5.16** BOM; no application dependency or Java baseline change. Verified with Java 21 and real PostgreSQL 17.6 containers. Official [driver properties](https://jdbc.postgresql.org/documentation/use/) cover the selected connection, query, socket, cancellation, read-only and buffer controls. The [download matrix](https://jdbc.postgresql.org/download/) lists Java 8+ support and newer patch releases; this preserves the coordinated BOM, not a claim of latest-patch or vulnerability clearance. See ADR-011 for TLS and production validation limitations.
+
+## Retained PDF preview
+
+PDFBox **3.0.5** moves from test-only to compile/runtime scope without changing its pin or the Java 21 baseline. Its Loader/PDFRenderer path was checked against [Apache's migration guide](https://pdfbox.apache.org/3.0/migration.html), [rendering guidance](https://github.com/apache/pdfbox-docs/blob/master/content/3.0/faq.md) and [security model](https://pdfbox.apache.org/security.html). Only integrity-checked PDFs from the existing trusted-template pipeline are accepted; this is not an arbitrary-document sandbox. The examples module and embedded-file extraction are not used. Production vulnerability/container scans and resource-isolation verification remain open.

@@ -8,7 +8,7 @@ Each family below retains the full corresponding scope in the implementation req
 | SEC-01  | OIDC session, OAuth bearer, role enforcement, CSRF                | 0–5   | SecurityConfig; browser foundation spec; object checks required at each domain API                                  |
 | CFG-01  | Versioned strict JSON/YAML contract and policy precedence         | 1,3   | contracts; strict JSON/YAML codec; versioned shape and mapping validation; broader resource precedence remains in 3 |
 | TPL-01  | Trusted templates, fingerprints, dependency closure, versions     | 1,3   | V13 definitions + V15 immutable trusted standalone JRXML, compilation, hash pinning and cache tests; dependency bundles remain open                                                                 |
-| DATA-01 | Structured and JDBC sources, typed parameters, binding, deadlines | 1,3   | V16 immutable typed inputs plus validated locale/time-zone rendering and browser tests; JDBC/arbitrary schemas remain open                                                        |
+| DATA-01 | Structured and JDBC sources, typed parameters, binding, deadlines | 1,3   | V16 typed inputs, V18 JDBC snapshot imports and locale/time-zone rendering; live JDBC/arbitrary schemas remain open                                                        |
 | JOB-01  | Durable acceptance, idempotency, lost acknowledgements            | 1     | PostgreSQL transaction and duplicate/conflict tests                                                                 |
 | JOB-02  | State, attempts, fencing, cancellation, deadlines, restart        | 1,2,5 | Batch recovery and linked reprocessing with concurrent idempotency, ownership, fresh-resource and real PDF tests; broader fault tests remain                                                          |
 | ART-01  | PDF output, retained artifacts and integrity                      | 1     | Jasper compile/fill/export and PDF text tests                                                                       |
@@ -98,3 +98,40 @@ DOCX has structural/content verification, not a Word/LibreOffice visual-layout c
 | UI-02 / SEC-01  | ConfigurationController, form/JSON/YAML editor, mounted-form canonical key | No-write conversion, CSRF, safe errors; browser YAML output/cloud integrity and withheld-ACK recovery with one execution                    |
 
 See ADR-005 for media types, parser bounds, unsupported YAML features, no-resource-resolution conversion semantics and compatibility decisions.
+
+## Phase 3 job-history increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| API-01 / SEC-01 | Owner-bound exact definition/status and UTC date predicates; allowlisted sort; repeatable-read count/page; V17 indexes | JobPersistenceTest: real PostgreSQL date boundaries, tied timestamps, disjoint pages, owner isolation, invalid dates/ranges/sort and injection-like input |
+| UI-01/02 | Server-rendered Jobs filters, URL persistence, reset and stable pagination links | Chromium history workflow: shareable URL reload, page preservation, empty/error/reset states, API rejection and axe checks |
+
+Broader catalog search, global operator search, cursor snapshots and large-history performance validation remain open. This increment does not implement tenant governance or scheduling.
+
+## Phase 3 JDBC snapshot increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| DATA-01 / CFG-01 | JdbcSalesAdapter: deployment-owned PostgreSQL profile, parameter binding, read-only repeatable-read snapshot, type/range/size limits and timeouts | JdbcSourceTest: real SELECT-only identity, rejected writes, bound/injection-like category, empty/null/fractional/oversized inputs, query-lock timeout and recovery |
+| TPL-01 / JOB-01 | SourceRegistry shares immutable structured storage; V18 source_import provenance and audit; existing definition/acceptance/Batch path | Changed remote rows cannot alter old snapshot; deduplication, append-only provenance and actual Batch CSV content |
+| SEC-01 / UI-01/02 | Administrator/CSRF protected check/import/history; no browser SQL/credentials; connected source-to-definition flow | Java permission/redaction tests; full browser connection/import/definition/CSV/Go delivery and axe coverage |
+
+Initial JDBC support is snapshot import before job submission. Live per-job execution, general adapters/field schemas, subreport sources, tenant ACLs and production TLS/secret-manager integration remain open DATA-01 scope.
+
+## Phase 3 definition-catalog increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| TPL-01 / API-01 | DefinitionCatalogController, V19, OpenAPI DefinitionPage; current ID/name/description literal search, lifecycle filter, deterministic order and snapshot-consistent count | MultiOutputTest: 23 real PostgreSQL definitions, tied names, 20/1 enabled pages, disabled ordering, literal `%`/`_`, current version after revision, invalid filters and preserved legacy array contract |
+| SEC-01 / UI-01/02 | Authenticated catalog GET and server-rendered filters/shareable pages; template/source draft references preserved | Unauthorized/role-denied tests; Chromium search/page/reload/order/empty/error/reset workflow and axe checks; sample-report discovery through search |
+
+Legacy definition-array consumers and the submission selector remain unpaginated. Full-text search, historical-version search, tenant filtering and large-catalog benchmarks are not implemented by this increment.
+
+## Phase 3 retained PDF preview increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| TPL-01 / ART-01 / SEC-01 | PdfPreviewController/PdfPreview use owned, retained, SHA-256-checked PDF output; bounded PNG rasterization; no new generation path | MultiOutputTest: actual Batch PDF and nonblank PNG pixels, owner/admin isolation, cross-job IDs, bad page, CSV rejection, integrity and missing-file errors, unchanged attempt/delivery counts |
+| ART-02 / UI-01/02 | Job detail preview with page controls, visible limits, loading/errors/retry/close and authorized download retained | PdfPreviewTest: first-20/page-size limits, malformed PDF and symlink rejection; Chromium multi-page image, injected preview interruption followed by real retry, unchanged execution/artifact/delivery state and unrelated-user rejection |
+
+Preview-before-submission, arbitrary uploaded PDFs, other preview formats, hard parser isolation and report-document accessibility are not implemented. Trusted-template policy and normal delivery requirements remain in force.

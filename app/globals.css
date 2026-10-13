@@ -239,6 +239,7 @@ button:disabled {
 }
 .filters {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 16px;
 }
@@ -336,4 +337,16 @@ legend {
   clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
+}
+
+.pdf-preview {
+  margin-top: 16px;
+}
+.pdf-preview figure {
+  margin: 16px 0;
+}
+.pdf-preview img {
+  display: block;
+  max-width: 100%;
+  height: auto;
 }

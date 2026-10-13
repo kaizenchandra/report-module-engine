@@ -47,8 +47,13 @@ class JobController {
   Map<String, Object> list(
       Authentication user,
       @RequestParam(defaultValue = "0") int page,
-      @RequestParam(required = false) String status) {
-    return jobs.list(user.getName(), page, status);
+      @RequestParam(required = false) String status,
+      @RequestParam(required = false) String definitionId,
+      @RequestParam(required = false) String acceptedFrom,
+      @RequestParam(required = false) String acceptedBefore,
+      @RequestParam(defaultValue = "newest") String sort) {
+    return jobs.list(
+        user.getName(), page, status, definitionId, acceptedFrom, acceptedBefore, sort);
   }
 
   @GetMapping("/{id}")

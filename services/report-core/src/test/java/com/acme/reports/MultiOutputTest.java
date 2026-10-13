@@ -614,4 +614,183 @@ class MultiOutputTest {
                             true))))
         .andExpect(status().isForbidden());
   }
+
+  @Test
+  void catalogSearchIsLiteralPaginatedAndUsesCurrentVersions() throws Exception {
+    String prefix = "catalog-" + UUID.randomUUID();
+    for (int n = 0; n < 23; n++) {
+      db.update(
+          "INSERT INTO"
+              + " report_definition(id,version,name,description,template_resource,enabled,updated_at)"
+              + " VALUES (?,1,'Tied name',?,'templates/sales-summary.jrxml',?,?::timestamptz)",
+          prefix + "-" + String.format("%02d", n),
+          prefix + " literal%_marker",
+          n < 21,
+          n == 22 ? "2025-01-02T00:00Z" : "2025-01-01T00:00Z");
+    }
+    var first =
+        json.readTree(
+            mvc.perform(
+                    get("/api/v1/definition-catalog")
+                        .with(user("reader").roles("REPORT_USER"))
+                        .param("q", "  " + prefix.toUpperCase() + "  ")
+                        .param("status", "enabled"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(21))
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    assertThat(first.path("items").size()).isEqualTo(20);
+    assertThat(first.path("items").get(0).path("id").asText()).isEqualTo(prefix + "-00");
+    var second =
+        json.readTree(
+            mvc.perform(
+                    get("/api/v1/definition-catalog")
+                        .with(user("reader").roles("REPORT_USER"))
+                        .param("q", prefix)
+                        .param("status", "enabled")
+                        .param("page", "1"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    assertThat(second.path("items").size()).isEqualTo(1);
+    assertThat(second.path("items").get(0).path("id").asText()).isEqualTo(prefix + "-20");
+    mvc.perform(
+            get("/api/v1/definition-catalog")
+                .with(user("reader").roles("REPORT_USER"))
+                .param("q", prefix)
+                .param("status", "disabled")
+                .param("sort", "updated"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.total").value(2))
+        .andExpect(jsonPath("$.items[0].id").value(prefix + "-22"));
+    mvc.perform(
+            get("/api/v1/definition-catalog")
+                .with(user("reader").roles("REPORT_USER"))
+                .param("q", prefix + " literal%_"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.total").value(23));
+    for (String query : List.of(prefix + " literal%missing", "' OR true --"))
+      mvc.perform(
+              get("/api/v1/definition-catalog")
+                  .with(user("reader").roles("REPORT_USER"))
+                  .param("q", query))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.total").value(0));
+    db.update(
+        "UPDATE report_definition SET version=2,name=?,updated_at='2025-01-03T00:00Z' WHERE id=?",
+        prefix + " revised",
+        prefix + "-00");
+    mvc.perform(
+            get("/api/v1/definition-catalog")
+                .with(user("reader").roles("REPORT_USER"))
+                .param("q", prefix + " revised"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.total").value(1))
+        .andExpect(jsonPath("$.items[0].version").value(2));
+    mvc.perform(get("/api/v1/definitions").with(user("reader").roles("REPORT_USER")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$").isArray());
+  }
+
+  @Test
+  void catalogRejectsUnauthorizedAndInvalidFilters() throws Exception {
+    mvc.perform(get("/api/v1/definition-catalog")).andExpect(status().isUnauthorized());
+    mvc.perform(get("/api/v1/definition-catalog").with(user("outsider").roles("OTHER")))
+        .andExpect(status().isForbidden());
+    for (var entry :
+        List.of(
+            Map.entry("q", "x".repeat(101)),
+            Map.entry("q", "bad\ninput"),
+            Map.entry("page", "-1"),
+            Map.entry("page", "10001"),
+            Map.entry("status", "unknown"),
+            Map.entry("sort", "name;DROP TABLE report_definition")))
+      mvc.perform(
+              get("/api/v1/definition-catalog")
+                  .with(user("reader").roles("REPORT_USER"))
+                  .param(entry.getKey(), entry.getValue()))
+          .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void previewUsesOwnedRetainedPdfWithoutAnotherExecution() throws Exception {
+    UUID id =
+        stage(
+            new ReportRequest(
+                "1",
+                "sales-summary",
+                1,
+                new ReportRequest.Parameters("Preview content"),
+                List.of("PDF"),
+                "local-s3"));
+    var artifact = db.queryForMap("SELECT id,storage_key FROM report_artifact WHERE job_id=?", id);
+    String base = "/api/v1/jobs/" + id + "/outputs/" + artifact.get("id") + "/preview";
+    mvc.perform(get(base)).andExpect(status().isUnauthorized());
+    for (String path : List.of(base, base + "/pages/0")) {
+      mvc.perform(get(path).with(user("other").roles("REPORT_USER")))
+          .andExpect(status().isNotFound());
+      mvc.perform(get(path).with(user("admin-not-owner").roles("REPORT_ADMIN", "REPORT_USER")))
+          .andExpect(status().isNotFound());
+    }
+    mvc.perform(get(base).with(user("multi-owner").roles("REPORT_USER")))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Cache-Control", "no-store"))
+        .andExpect(jsonPath("$.pageCount").value(1))
+        .andExpect(jsonPath("$.previewPages").value(1));
+    byte[] png =
+        mvc.perform(get(base + "/pages/0").with(user("multi-owner").roles("REPORT_USER")))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType("image/png"))
+            .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+            .andExpect(header().string("Cache-Control", "no-store"))
+            .andReturn()
+            .getResponse()
+            .getContentAsByteArray();
+    var image = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(png));
+    assertThat(image.getWidth()).isBetween(700, 900);
+    assertThat(image.getHeight()).isBetween(1000, 1200);
+    long ink = 0;
+    for (int y = 0; y < image.getHeight(); y++)
+      for (int x = 0; x < image.getWidth(); x++)
+        if ((image.getRGB(x, y) & 0xffffff) != 0xffffff) ink++;
+    assertThat(ink).isGreaterThan(1000);
+    image.flush();
+    for (int page : List.of(-1, 1, 20))
+      mvc.perform(get(base + "/pages/" + page).with(user("multi-owner").roles("REPORT_USER")))
+          .andExpect(status().isBadRequest());
+    assertThat(db.queryForObject("SELECT attempt FROM report_job WHERE id=?", Integer.class, id))
+        .isEqualTo(1);
+    assertThat(
+            db.queryForObject(
+                "SELECT count(*) FROM delivery_outbox WHERE job_id=?", Integer.class, id))
+        .isEqualTo(1);
+    var file = renderer.path(artifact.get("storage_key").toString());
+    java.nio.file.Files.writeString(file, "corrupted");
+    mvc.perform(get(base).with(user("multi-owner").roles("REPORT_USER")))
+        .andExpect(status().isConflict());
+    java.nio.file.Files.delete(file);
+    mvc.perform(get(base + "/pages/0").with(user("multi-owner").roles("REPORT_USER")))
+        .andExpect(status().isGone());
+    UUID csv =
+        stage(
+            new ReportRequest(
+                "1",
+                "sales-summary",
+                1,
+                new ReportRequest.Parameters("No CSV preview"),
+                List.of("CSV"),
+                "local-s3"));
+    UUID csvArtifact =
+        db.queryForObject("SELECT id FROM report_artifact WHERE job_id=?", UUID.class, csv);
+    mvc.perform(
+            get("/api/v1/jobs/" + csv + "/outputs/" + csvArtifact + "/preview")
+                .with(user("multi-owner").roles("REPORT_USER")))
+        .andExpect(status().isUnsupportedMediaType());
+    mvc.perform(
+            get("/api/v1/jobs/" + csv + "/outputs/" + artifact.get("id") + "/preview")
+                .with(user("multi-owner").roles("REPORT_USER")))
+        .andExpect(status().isNotFound());
+  }
 }
