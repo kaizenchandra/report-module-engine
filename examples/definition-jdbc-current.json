@@ -1,0 +1,10 @@
+{
+  "id": "current-stationery",
+  "configuration": {
+    "name": "Current stationery sales",
+    "description": "Capture current JDBC sales rows once per new job; retries and reprocessing reuse the accepted snapshot.",
+    "templateResource": "templates/sales-summary.jrxml",
+    "dataSourceRef": "jdbc:sales-jdbc:stationery",
+    "enabled": true
+  }
+}

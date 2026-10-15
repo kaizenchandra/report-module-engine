@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1",
+  "definitionId": "typed-example",
+  "definitionVersion": 1,
+  "parameters": {
+    "title": "Typed parameter example",
+    "timeZone": "America/New_York",
+    "values": {
+      "P_APPROVED": { "type": "BOOLEAN", "value": false },
+      "P_AS_OF": { "type": "DATE", "value": "2024-03-10" },
+      "P_COUNT": { "type": "INTEGER", "value": 7 },
+      "P_NOTE": { "type": "TEXT", "value": "=SUM(1,2)" },
+      "P_RATE": { "type": "DECIMAL", "value": "12.3400" }
+    }
+  },
+  "outputs": ["CSV"],
+  "destinationRef": "local-s3",
+  "outputOptions": { "csvDelimiter": "SEMICOLON" }
+}

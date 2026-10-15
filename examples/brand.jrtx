@@ -1,0 +1,4 @@
+<jasperTemplate>
+  <style name="Base" fontName="SansSerif" fontSize="18" bold="true"/>
+  <style name="Accent" style="Base" forecolor="#ff0000"/>
+</jasperTemplate>

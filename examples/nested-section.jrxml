@@ -1,0 +1,9 @@
+<jasperReport name="SalesRow" language="java" pageWidth="515" pageHeight="842" columnWidth="515" leftMargin="0" rightMargin="0" topMargin="0" bottomMargin="0">
+  <parameter name="TITLE" class="java.lang.String"/>
+  <field name="product" class="java.lang.String"/>
+  <field name="quantity" class="java.lang.Integer"/>
+  <field name="amount" class="java.math.BigDecimal"/>
+  <detail><band height="25">
+    <element kind="subreport" x="0" y="0" width="515" height="25"><expression><![CDATA["assets/subreport-row.jrxml"]]></expression></element>
+  </band></detail>
+</jasperReport>

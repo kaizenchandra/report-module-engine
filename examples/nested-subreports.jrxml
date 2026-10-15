@@ -1,0 +1,19 @@
+<jasperReport name="SalesSummary" language="java" pageWidth="595" pageHeight="842" columnWidth="515" leftMargin="40" rightMargin="40" topMargin="40" bottomMargin="40" uuid="b4928e1f-63af-41a2-8f96-bfd91c207071">
+  <parameter name="TITLE" class="java.lang.String"/>
+  <field name="product" class="java.lang.String"/>
+  <field name="quantity" class="java.lang.Integer"/>
+  <field name="amount" class="java.math.BigDecimal"/>
+  <title height="90">
+    <element kind="textField" x="0" y="0" width="515" height="32" fontSize="22.0" bold="true"><expression><![CDATA[$P{TITLE}]]></expression></element>
+    <element kind="staticText" x="0" y="42" width="515" height="22" fontSize="11.0"><text><![CDATA[Sales summary | Synthetic demonstration data | USD | UTC]]></text></element>
+  </title>
+  <columnHeader height="28">
+    <element kind="staticText" x="0" y="0" width="270" height="22" bold="true"><text><![CDATA[Product]]></text></element>
+    <element kind="staticText" x="280" y="0" width="90" height="22" bold="true"><text><![CDATA[Quantity]]></text></element>
+    <element kind="staticText" x="380" y="0" width="130" height="22" bold="true"><text><![CDATA[Amount (USD)]]></text></element>
+  </columnHeader>
+  <detail><band height="25">
+    <element kind="subreport" x="0" y="0" width="515" height="25"><expression><![CDATA["assets/nested-section.jrxml"]]></expression></element>
+  </band></detail>
+  <pageFooter height="24"><element kind="textField" x="0" y="0" width="515" height="22"><expression><![CDATA["Page " + $V{PAGE_NUMBER}]]></expression></element></pageFooter>
+</jasperReport>
