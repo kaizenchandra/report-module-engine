@@ -15,12 +15,12 @@ import org.springframework.web.server.ResponseStatusException;
 @PreAuthorize("hasRole('REPORT_ADMIN')")
 class JdbcSourceController {
   private final JdbcSalesAdapter adapter;
-  private final SourceRegistry registry;
+  private final JdbcImportService importer;
   private final JdbcTemplate db;
 
-  JdbcSourceController(JdbcSalesAdapter adapter, SourceRegistry registry, JdbcTemplate db) {
+  JdbcSourceController(JdbcSalesAdapter adapter, JdbcImportService importer, JdbcTemplate db) {
     this.adapter = adapter;
-    this.registry = registry;
+    this.importer = importer;
     this.db = db;
   }
 
@@ -31,7 +31,14 @@ class JdbcSourceController {
   @GetMapping
   Map<String, Object> profile() {
     return Map.of(
-        "id", "sales-jdbc", "adapter", "postgres-sales-v1", "configured", adapter.configured());
+        "id",
+        "sales-jdbc",
+        "adapter",
+        JdbcSalesAdapter.VERSION,
+        "configured",
+        adapter.configured(),
+        "mappingSha256",
+        adapter.mapping().sha256());
   }
 
   @PostMapping("/check")
@@ -49,12 +56,16 @@ class JdbcSourceController {
 
   @PostMapping(value = "/imports", consumes = "application/json")
   ResponseEntity<Map<String, Object>> snapshot(
-      @Valid @RequestBody ImportRequest request, Authentication actor) throws Exception {
-    // Close the external read transaction before opening the core persistence transaction.
-    var rows = adapter.read(request.category(), false);
-    var result = registry.register(request.name(), rows, actor.getName(), request.category());
+      @Valid @RequestBody ImportRequest request,
+      Authentication actor,
+      @RequestHeader(value = "Idempotency-Key", required = false) String key)
+      throws Exception {
+    var result = importer.snapshot(request.name(), request.category(), actor.getName(), key);
+    var body = new LinkedHashMap<>(result.source());
+    body.put("importId", result.importId());
     return ResponseEntity.status(result.created() ? HttpStatus.CREATED : HttpStatus.OK)
-        .body(result.source());
+        .header("Idempotency-Replayed", Boolean.toString(result.replayed()))
+        .body(body);
   }
 
   @GetMapping("/imports")
@@ -62,8 +73,8 @@ class JdbcSourceController {
     if (page < 0 || page > 10000)
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid page");
     return db.queryForList(
-        "SELECT id,source_sha256,profile_ref,adapter_version,category,created_at FROM source_import"
-            + " ORDER BY created_at DESC,id DESC LIMIT 20 OFFSET ?",
+        "SELECT id,source_sha256,profile_ref,adapter_version,category,created_at,mapping_sha256"
+            + " FROM source_import ORDER BY created_at DESC,id DESC LIMIT 20 OFFSET ?",
         page * 20);
   }
 }

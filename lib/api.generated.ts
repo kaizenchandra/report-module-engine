@@ -1343,6 +1343,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/definitions/{id}/versions/{version}/parameters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    version: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Declared custom parameters of the exact immutable template version */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TemplateParameter"][];
+                    };
+                };
+                /** @description Invalid request or unavailable version */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Authentication required */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Permission or CSRF failure */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Resource not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Resource changed; reload */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/definitions/{id}/versions/{version}": {
         parameters: {
             query?: never;
@@ -1624,7 +1700,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** @description Trusted REPORT_ADMIN registration, disabled unless deployment explicitly enables it. Compile standalone source before immutable content-addressed storage; duplicate content returns existing metadata. XML checks are not a sandbox. */
+        /** @description Trusted REPORT_ADMIN registration, disabled unless deployment explicitly enables it. Compile source and its complete named asset closure before immutable content-addressed storage; duplicate content returns existing metadata. XML checks are not a sandbox. */
         post: {
             parameters: {
                 query?: never;
@@ -1771,6 +1847,67 @@ export interface paths {
                     };
                     content: {
                         "text/plain": string;
+                    };
+                };
+                /** @description Unknown or invalid content hash */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Authentication required */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Permission denied */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/templates/{sha}/bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sha: string;
+            };
+            cookie?: never;
+        };
+        /** @description Administrator-only attachment download of immutable JRXML source. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    sha: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Verified JRXML plus complete named PNG asset archive; administrator only */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/zip": string;
                     };
                 };
                 /** @description Unknown or invalid content hash */
@@ -2182,11 +2319,14 @@ export interface paths {
             };
         };
         put?: never;
-        /** @description Administrator-only bounded snapshot import from deployment profile. Repeated imports query current source rows; identical contents deduplicate. Not a job submission or idempotent refresh. Query and credentials are never caller supplied. */
+        /** @description Administrator-only bounded snapshot import. Optional actor-scoped Idempotency-Key recovers the first committed result without querying JDBC again; changed name/category with the same key conflicts. Omission preserves fresh-read/separate-provenance behavior. No caller SQL or credentials. */
         post: {
             parameters: {
                 query?: never;
-                header?: never;
+                header?: {
+                    /** @description Reuse for exact request recovery. A new key intentionally captures current source rows. */
+                    "Idempotency-Key"?: string;
+                };
                 path?: never;
                 cookie?: never;
             };
@@ -2196,22 +2336,26 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Response */
+                /** @description Existing source content or recovered keyed import */
                 200: {
                     headers: {
+                        /** @description True when recovering a previously committed keyed import */
+                        "Idempotency-Replayed"?: boolean;
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["StructuredSource"];
+                        "application/json": components["schemas"]["JdbcImportResult"];
                     };
                 };
-                /** @description Response */
+                /** @description New structured source registered */
                 201: {
                     headers: {
+                        /** @description True when recovering a previously committed keyed import */
+                        "Idempotency-Replayed"?: boolean;
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["StructuredSource"];
+                        "application/json": components["schemas"]["JdbcImportResult"];
                     };
                 };
                 /** @description Invalid input */
@@ -2230,6 +2374,13 @@ export interface paths {
                 };
                 /** @description Administrator permission or CSRF failure */
                 403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Same actor/key has a different import selector */
+                409: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -2676,12 +2827,59 @@ export interface components {
             created_at: string;
             emulated: boolean;
         };
+        ParameterValue: {
+            /** @enum {string} */
+            type: "TEXT";
+            value: string;
+        } | {
+            /** @enum {string} */
+            type: "INTEGER";
+            value: number;
+        } | {
+            /** @enum {string} */
+            type: "DECIMAL";
+            /** @description Decimal as a string to preserve exact precision. */
+            value: string;
+        } | {
+            /** @enum {string} */
+            type: "BOOLEAN";
+            value: boolean;
+        } | {
+            /** @enum {string} */
+            type: "DATE";
+            /** Format: date */
+            value: string;
+        };
+        TemplateParameter: {
+            name: string;
+            /** @enum {string} */
+            type: "TEXT" | "INTEGER" | "DECIMAL" | "BOOLEAN" | "DATE";
+        };
+        /** @description Nonempty options applying only to selected formats. Omit to preserve existing defaults and request fingerprints. */
+        OutputOptions: {
+            /**
+             * @description CSV field delimiter; UTF-8, CRLF and formula escaping remain mandatory.
+             * @enum {string}
+             */
+            csvDelimiter?: "COMMA" | "SEMICOLON" | "TAB";
+            /** @description Include a UTF-8 byte-order mark at the start of CSV when true; false omits it. Default: no BOM. Only valid with CSV selected; UTF-8, CRLF and formula protection remain mandatory. */
+            csvIncludeBom?: boolean;
+            /** @description Export each Jasper report page as a separate worksheet when true. */
+            xlsxOnePagePerSheet?: boolean;
+            /** @description XLSX base worksheet name: ASCII letters/digits, spaces, periods, underscores and hyphens; start alphanumeric, no trailing space, History reserved. Additional worksheets append numbered suffixes, shortening the base to fit 31 characters. Omit to preserve template/platform names. */
+            xlsxSheetName?: string;
+        };
         ReportRequestV1: {
+            outputOptions?: components["schemas"]["OutputOptions"];
             /** @enum {string} */
             schemaVersion: "1";
             definitionId: string;
             definitionVersion: number;
             parameters: {
+                /** @description Every custom parameter declared by the selected trusted template is required; undeclared names/types are rejected at acceptance. Sorted names determine canonical serialization. */
+                values?: {
+                    [key: string]: components["schemas"]["ParameterValue"];
+                };
                 title: string;
                 /**
                  * @default en-US
@@ -2699,11 +2897,16 @@ export interface components {
         };
         /** @description Explicit mappings. Optional outputs must be selected outputs, with at least one required output. Every output must have a mapping; each required output needs a required delivery. Required deliveries cannot depend on optional outputs. Duplicate destination/format pairs and physical targets are rejected. Backend enforces cross-field rules. */
         ReportRequestV2: {
+            outputOptions?: components["schemas"]["OutputOptions"];
             /** @enum {string} */
             schemaVersion: "2";
             definitionId: string;
             definitionVersion: number;
             parameters: {
+                /** @description Every custom parameter declared by the selected trusted template is required; undeclared names/types are rejected at acceptance. Sorted names determine canonical serialization. */
+                values?: {
+                    [key: string]: components["schemas"]["ParameterValue"];
+                };
                 title: string;
                 /**
                  * @default en-US
@@ -2735,7 +2938,10 @@ export interface components {
             description: string;
             templateResource: string;
             enabled: boolean;
-            /** @default sample-v1 */
+            /**
+             * @description A JDBC reference captures current rows before each new job is accepted. Retries and reprocessing reuse the accepted immutable snapshot. Category is a bound value in the fixed deployment-owned sales adapter; no SQL, URLs or credentials are accepted.
+             * @default sample-v1
+             */
             dataSourceRef: string | null;
         };
         DefinitionCreate: {
@@ -2747,6 +2953,7 @@ export interface components {
             configuration: components["schemas"]["DefinitionConfiguration"];
         };
         RegisteredTemplate: {
+            asset_count?: number;
             sha256: string;
             name: string;
             compiler_version: string;
@@ -2754,13 +2961,30 @@ export interface components {
             created_at: string;
         };
         TemplateRegistration: {
+            /** @description Omitted or null assets means no dependencies. Otherwise, complete exact dependency closure. Canonical base64 PNG/JRTX/JRXML/TTF files only; <=8192 bytes each, <=16384 bytes total, PNG dimensions <=512 each; at most eight image elements across the source closure and eight constant styles per style-dependent report. At most four detail-band or direct summary-section subreport elements per report, two dependency levels (child/grandchild), eight expanded elements along the graph; acyclic complete closure and matching immediate-parent parameters. Detail components receive the current row; summary components receive their immediate parent report's full accepted row collection. Each gets a fresh data cursor; custom bindings remain unsupported. TTF subsets: <=256 glyphs, unrestricted embedding flags, regular TrueType outlines; PDF embeds and HTML packages font bytes, XLSX/DOCX carry family hints. Missing rendered glyphs fail generation. Full JSON request <=65536 bytes. */
+            assets?: {
+                [key: string]: string;
+            } | null;
             name: string;
-            /** @description UTF-8 standalone JasperReports 7 JRXML, maximum 32768 bytes. Full JSON request maximum 65536 bytes. */
+            /** @description UTF-8 JasperReports 7 parent JRXML, maximum 32768 bytes. Full JSON request maximum 65536 bytes. */
             jrxml: string;
             /** @enum {boolean} */
             trustedCodeAcknowledged: true;
         };
         TemplatePolicy: {
+            /** @constant */
+            maxFontGlyphs?: 256;
+            /** @constant */
+            maxSubreportDepth?: 2;
+            /** @constant */
+            maxSubreportsPerReport?: 4;
+            /** @constant */
+            maxExpandedSubreports?: 8;
+            maxImageElements?: number;
+            maxAssetCount?: number;
+            maxAssetBytes?: number;
+            maxTotalAssetBytes?: number;
+            maxAssetDimension?: number;
             uploadsEnabled: boolean;
             maxSourceBytes: number;
             compilerVersion: string;
@@ -2787,8 +3011,17 @@ export interface components {
             /** @enum {string} */
             id: "sales-jdbc";
             /** @enum {string} */
-            adapter: "postgres-sales-v1";
+            adapter: "postgres-sales-v1" | "postgres-sales-v2";
+            /** @description Content hash of deployment-owned identifiers; no endpoint, credentials or raw SQL. New imports retain their original mapping fingerprint. */
+            mappingSha256?: string;
             configured: boolean;
+        };
+        JdbcImportResult: components["schemas"]["StructuredSource"] & {
+            /**
+             * Format: uuid
+             * @description Immutable provenance import identifier; preserved by keyed retries.
+             */
+            importId: string;
         };
         JdbcImportRequest: {
             name: string;
@@ -2805,6 +3038,8 @@ export interface components {
             source_sha256: string;
             profile_ref: string;
             adapter_version: string;
+            /** @description Immutable fingerprint of the deployment table/column mapping used by this import. */
+            mapping_sha256?: string;
             category: string;
             /** Format: date-time */
             created_at: string;

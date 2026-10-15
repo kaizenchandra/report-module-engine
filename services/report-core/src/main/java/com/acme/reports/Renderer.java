@@ -104,6 +104,18 @@ public class Renderer {
       String locale,
       String zone)
       throws JRException {
+    return renderConfigured(source, title, format, rows, locale, zone, null);
+  }
+
+  public synchronized byte[] renderConfigured(
+      byte[] source,
+      String title,
+      ReportFormat format,
+      Collection<Map<String, ?>> rows,
+      String locale,
+      String zone,
+      ReportRequest.OutputOptions options)
+      throws JRException {
     if (source == null && compiled == null)
       compiled = JasperCompileManager.compileReport(new ByteArrayInputStream(template));
     return export(
@@ -112,7 +124,28 @@ public class Renderer {
         format,
         rows == null ? sampleRows() : rows,
         Locale.forLanguageTag(locale),
-        TimeZone.getTimeZone(java.time.ZoneId.of(zone)));
+        TimeZone.getTimeZone(java.time.ZoneId.of(zone)),
+        options);
+  }
+
+  public synchronized byte[] renderRequest(
+      byte[] source,
+      ReportRequest.Parameters parameters,
+      ReportFormat format,
+      Collection<Map<String, ?>> rows,
+      ReportRequest.OutputOptions options)
+      throws JRException {
+    if (source == null && compiled == null)
+      compiled = JasperCompileManager.compileReport(new ByteArrayInputStream(template));
+    return export(
+        source == null ? compiled : compileTrusted(source),
+        parameters.title(),
+        format,
+        rows == null ? sampleRows() : rows,
+        Locale.forLanguageTag(parameters.resolvedLocale()),
+        TimeZone.getTimeZone(java.time.ZoneId.of(parameters.resolvedTimeZone())),
+        options,
+        parameters.values());
   }
 
   public synchronized byte[] renderData(
@@ -137,6 +170,31 @@ public class Renderer {
       Locale locale,
       TimeZone zone)
       throws JRException {
+    return export(report, title, format, rows, locale, zone, null);
+  }
+
+  private byte[] export(
+      JasperReport report,
+      String title,
+      ReportFormat format,
+      Collection<Map<String, ?>> rows,
+      Locale locale,
+      TimeZone zone,
+      ReportRequest.OutputOptions options)
+      throws JRException {
+    return export(report, title, format, rows, locale, zone, options, null);
+  }
+
+  private byte[] export(
+      JasperReport report,
+      String title,
+      ReportFormat format,
+      Collection<Map<String, ?>> rows,
+      Locale locale,
+      TimeZone zone,
+      ReportRequest.OutputOptions options,
+      Map<String, ReportRequest.ParameterValue> values)
+      throws JRException {
     if (format == ReportFormat.CSV) {
       var safe = new ArrayList<Map<String, ?>>();
       for (var row : rows) {
@@ -150,25 +208,47 @@ public class Renderer {
     // Title is the only consumer-controlled text in this trusted fixture. Force CSV literal
     // text even when spreadsheet software ignores leading whitespace before a formula marker.
     parameters.put("TITLE", format == ReportFormat.CSV ? "'" + title : title);
+    if (values != null)
+      values.forEach(
+          (name, value) ->
+              parameters.put(
+                  name, value.jasperValue(zone.toZoneId().getId(), format == ReportFormat.CSV)));
+    parameters.put("R_REPORT_ROWS", rows);
     parameters.put(JRParameter.REPORT_LOCALE, locale);
     parameters.put(JRParameter.REPORT_TIME_ZONE, zone);
+    var scope = TemplateFonts.scope(report);
     var print =
-        JasperFillManager.fillReport(report, parameters, new JRMapCollectionDataSource(rows));
-    if (format == ReportFormat.PDF) return JasperExportManager.exportReportToPdf(print);
-    if (format == ReportFormat.HTML) return HtmlPackage.export(print);
+        JasperFillManager.getInstance(scope.context())
+            .fill(report, parameters, new JRMapCollectionDataSource(rows));
+    scope.check(print);
+    if (format == ReportFormat.HTML) return HtmlPackage.export(print, scope.context());
     var bytes = new ByteArrayOutputStream();
-    if (format == ReportFormat.CSV) {
-      var exporter = new JRCsvExporter();
+    if (format == ReportFormat.PDF) {
+      var exporter = new net.sf.jasperreports.pdf.JRPdfExporter(scope.context());
+      exporter.setExporterInput(new SimpleExporterInput(print));
+      exporter.setExporterOutput(new SimpleOutputStreamExporterOutput(bytes));
+      exporter.exportReport();
+    } else if (format == ReportFormat.CSV) {
+      var exporter = new JRCsvExporter(scope.context());
       var settings = new SimpleCsvExporterConfiguration();
       settings.setEscapeFormula(true);
       settings.setOverrideHints(true);
       settings.setRecordDelimiter("\r\n");
+      if (options != null && options.csvIncludeBom() != null)
+        settings.setWriteBOM(options.csvIncludeBom());
+      if (options != null && options.csvDelimiter() != null)
+        settings.setFieldDelimiter(
+            switch (options.csvDelimiter()) {
+              case "SEMICOLON" -> ";";
+              case "TAB" -> "\t";
+              default -> ",";
+            });
       exporter.setConfiguration(settings);
       exporter.setExporterInput(new SimpleExporterInput(print));
       exporter.setExporterOutput(new SimpleWriterExporterOutput(bytes, "UTF-8"));
       exporter.exportReport();
     } else if (format == ReportFormat.DOCX) {
-      var exporter = new JRDocxExporter();
+      var exporter = new JRDocxExporter(scope.context());
       var settings = new SimpleDocxReportConfiguration();
       settings.setOverrideHints(true);
       settings.setIgnoreHyperlink(true);
@@ -177,9 +257,20 @@ public class Renderer {
       exporter.setExporterOutput(new SimpleOutputStreamExporterOutput(bytes));
       exporter.exportReport();
     } else if (format == ReportFormat.XLSX) {
-      var exporter = new JRXlsxExporter();
+      var exporter = new JRXlsxExporter(scope.context());
       var settings = new SimpleXlsxReportConfiguration();
       settings.setDetectCellType(true);
+      if (options != null && options.xlsxOnePagePerSheet() != null)
+        settings.setOnePagePerSheet(options.xlsxOnePagePerSheet());
+      if (options != null && options.xlsxSheetName() != null) {
+        String name = options.xlsxSheetName();
+        String[] names = new String[Math.max(1, print.getPages().size())];
+        for (int i = 0; i < names.length; i++) {
+          String suffix = i == 0 ? "" : " (" + (i + 1) + ")";
+          names[i] = name.substring(0, Math.min(name.length(), 31 - suffix.length())) + suffix;
+        }
+        settings.setSheetNames(names);
+      }
       settings.setOverrideHints(true);
       exporter.setConfiguration(settings);
       exporter.setExporterInput(new SimpleExporterInput(print));

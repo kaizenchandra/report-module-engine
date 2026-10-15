@@ -186,7 +186,7 @@ export function editableRequest(
     !v.parameters ||
     typeof v.parameters !== "object" ||
     Array.isArray(v.parameters) ||
-    !hasOnly(v.parameters, ["title", "locale", "timeZone"]) ||
+    !hasOnly(v.parameters, ["title", "locale", "timeZone", "values"]) ||
     typeof (v.parameters as { title?: unknown }).title !== "string" ||
     !outputList(v.outputs)
   )
@@ -200,6 +200,7 @@ export function editableRequest(
         "parameters",
         "outputs",
         "destinationRef",
+        "outputOptions",
       ]) &&
       v.outputs.length === 1 &&
       destination(v.destinationRef)
@@ -214,6 +215,7 @@ export function editableRequest(
       "outputs",
       "optionalOutputs",
       "deliveries",
+      "outputOptions",
     ]) &&
     (v.optionalOutputs === undefined ||
       (outputList(v.optionalOutputs) &&

@@ -101,6 +101,21 @@ class ConfigurationCodec {
           || ("2".equals(version) && wire.has("destinationRef"))
           || (wire.has("optionalOutputs") && !wire.path("optionalOutputs").isArray()))
         throw new IllegalArgumentException();
+      if (wire.has("outputOptions")) {
+        var options = wire.path("outputOptions");
+        if (!options.isObject()
+            || options.isEmpty()
+            || (options.has("csvDelimiter") && !options.path("csvDelimiter").isTextual())
+            || (options.has("csvIncludeBom") && !options.path("csvIncludeBom").isBoolean())
+            || (options.has("xlsxSheetName") && !options.path("xlsxSheetName").isTextual())
+            || (options.has("xlsxOnePagePerSheet")
+                && !options.path("xlsxOnePagePerSheet").isBoolean()))
+          throw new IllegalArgumentException();
+      }
+      var parameters = wire.path("parameters");
+      if (parameters.has("values")
+          && (!parameters.path("values").isObject() || parameters.path("values").isEmpty()))
+        throw new IllegalArgumentException();
       request = json.treeToValue(wire, ReportRequest.class);
     } catch (IOException | IllegalArgumentException | org.yaml.snakeyaml.error.YAMLException e) {
       // Parser diagnostics can echo parameters or source lines. Never send/log them.

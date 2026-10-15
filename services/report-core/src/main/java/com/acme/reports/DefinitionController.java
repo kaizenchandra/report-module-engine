@@ -14,11 +14,16 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 @RequestMapping("/api/v1/definitions")
 class DefinitionController {
+  static final String JDBC_PREFIX = "jdbc:sales-jdbc:";
+  static final String DATA_REFERENCE =
+      "sample-v1|data:[0-9a-f]{64}|jdbc:sales-jdbc:[a-zA-Z0-9][a-zA-Z0-9 _-]{0,39}";
   static final String TEMPLATE = "templates/sales-summary.jrxml";
   private final JdbcTemplate db;
+  private final Renderer renderer;
 
-  DefinitionController(JdbcTemplate db) {
+  DefinitionController(JdbcTemplate db, Renderer renderer) {
     this.db = db;
+    this.renderer = renderer;
   }
 
   record Configuration(
@@ -27,7 +32,7 @@ class DefinitionController {
       @NotNull @Pattern(regexp = "templates/sales-summary\\.jrxml|sha256:[0-9a-f]{64}")
           String templateResource,
       @NotNull Boolean enabled,
-      @Pattern(regexp = "sample-v1|data:[0-9a-f]{64}") String dataSourceRef) {
+      @Pattern(regexp = DATA_REFERENCE) String dataSourceRef) {
     String sourceReference() {
       return dataSourceRef == null ? "sample-v1" : dataSourceRef;
     }
@@ -89,13 +94,23 @@ class DefinitionController {
     return rows.getFirst();
   }
 
+  @GetMapping("/{id}/versions/{version}/parameters")
+  List<TrustedTemplate.Declaration> parameters(@PathVariable String id, @PathVariable int version) {
+    var definition = version(id, version);
+    String reference = definition.get("template_resource").toString();
+    return TrustedTemplate.parameters(
+        TEMPLATE.equals(reference)
+            ? renderer.bundledTemplate()
+            : TemplateController.source(db, reference));
+  }
+
   @PostMapping
   @ResponseStatus(HttpStatus.CREATED)
   @PreAuthorize("hasRole('REPORT_ADMIN')")
   @Transactional
   Map<String, Object> create(@Valid @RequestBody Create request, Authentication actor) {
     var c = request.configuration();
-    if (!"sample-v1".equals(c.sourceReference())
+    if (c.sourceReference().startsWith("data:")
         && db.queryForObject(
                 "SELECT count(*) FROM structured_source WHERE sha256=?",
                 Integer.class,
@@ -124,7 +139,7 @@ class DefinitionController {
   Map<String, Object> replace(
       @PathVariable String id, @Valid @RequestBody Replace request, Authentication actor) {
     var c = request.configuration();
-    if (!"sample-v1".equals(c.sourceReference())
+    if (c.sourceReference().startsWith("data:")
         && db.queryForObject(
                 "SELECT count(*) FROM structured_source WHERE sha256=?",
                 Integer.class,

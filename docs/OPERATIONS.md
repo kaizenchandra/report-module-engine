@@ -144,3 +144,51 @@ V19 adds current-name and update-time indexes without changing earlier migration
 Generate PDF through the normal submission path, then open job details → Preview PDF. Cloud delivery settings still apply to the job; the preview action itself does not regenerate or upload it. Other formats retain download-only access. Preview metadata reports total pages; navigation exposes up to the first 20 at 96 DPI. Download the original for remaining pages, selectable text, or pages too large to preview.
 
 A preview 404 means the job/artifact is not available to the signed-in owner; administrator role alone does not bypass ownership. 410 means retention removed the file; 409 means saved size/checksum no longer matches and requires operator investigation. 422 indicates an unreadable PDF or exceeded page/image limits. A 429 can be retried after preview capacity frees. Browser timeout/retry does not alter the report's status or restart Batch. Two operations per core process, bounded pixels and byte counts limit ordinary use; hard parser time/memory isolation and production load validation remain open. See [ADR-012](adr/012-retained-pdf-preview.md).
+
+## Template PNG dependencies
+
+V20 adds immutable core-owned `report_template_asset` rows. Back up and restore them with `report_template`, definition history and accepted jobs; retaining JRXML alone is insufficient for pinned image templates. Core checks each asset hash, referenced-name closure and manifest fingerprint before rendering. A corruption/missing-dependency failure must be investigated against retained source/assets; do not alter migration checksums or regenerate bytes under an old fingerprint.
+
+Deploy all capable core workers before accepting PNG-dependent templates. Older workers cannot render these references. Drain or preserve pending jobs with their complete content before rollback. Administrator bundle downloads contain original report.jrxml plus named PNG files; the manifest fingerprint is not the raw JRXML hash for these versions. Existing upload trust policy and attachment-only HTML exports apply. No production backup/restore validation is claimed by this local increment.
+
+## JDBC import acknowledgement recovery
+
+V21 retains actor/key → accepted import links in `jdbc_import_request`. Retry the same exact name/category with the original `Idempotency-Key` to recover a committed import without querying the source again. A different selector with that key returns 409. A new key or a keyless request intentionally captures current rows and can create new provenance. The form retains its pending key only while mounted, so keep the page open after a missing acknowledgement.
+
+Back up the ledger alongside structured sources, source_import and audit records. No key expiry/deletion policy is implemented yet. Deploy capable core workers before the UI; an older worker may ignore the header and cannot preserve this guarantee. Existing source concurrency/timeouts/row limits apply to reads that have no committed result. Concurrent unresolved requests may both read JDBC, but the core transaction publishes one import.
+
+## Named style dependencies
+
+V22 allows JRTX files in the existing immutable template asset table. Restore them with original JRXML and all PNG files. Bundles with styles use the v2 manifest domain documented in ADR-017; standalone and PNG-only references retain their previous fingerprints. Do not recompute an old reference from only its JRXML or replace style bytes under an existing reference. Deploy all capable core workers before accepting style-dependent definitions; preserve pending executions and their complete source/style/asset closure before rollback. No production restore validation is claimed.
+
+## Row-scoped subreport dependencies
+
+V23 allows JRXML assets in the same immutable template table. Deploy all capable core workers before admitting these bundles or updating the frontend. They use the v3 manifest domain in [ADR-018](adr/018-row-scoped-subreports.md); prior domains remain unchanged. Preserve original parent, child, PNG and JRTX bytes together during backup/restore and pending-job rollback. Children are rebuilt from XML in memory after restart; no precompiled report upload or resource resolver is required. Only one level of current-row detail components is supported. No production restore validation is claimed.
+
+## JDBC-backed job admission
+
+Publish a definition using `jdbc:sales-jdbc:<category>` to capture current rows once per new job. Deploy capable core workers before publishing these selectors or exposing the UI. No new migration is required; V23 remains current. The existing deployment-owned JDBC profile/read-only account, network policy, timeouts and concurrency/data limits apply. Publishing a definition does not check the connection; an unavailable source rejects a new capture without accepting a job.
+
+Back up accepted resolved configurations together with structured_source and source_import. The concrete datasetVersion and sourceImportId are sufficient for rendering/reprocessing without JDBC. Same-key submission retries recover committed jobs; a new key captures fresh data. Reprocessing reuses the parent's rows/import and still checks normal definition/destination admission. Preserve pending jobs and complete snapshots before rollback; old core workers cannot admit these selectors. See [ADR-019](adr/019-jdbc-backed-job-admission.md) for transaction/concurrency boundaries. No production restore validation is claimed.
+
+## Bounded nested template graphs
+
+Deploy capable core workers before accepting child/grandchild JRXML bundles or exposing the updated upload policy. Nested graphs use the v4 manifest domain in [ADR-020](adr/020-bounded-nested-subreports.md); flat v3 and earlier fingerprints remain unchanged. V23 remains current, with no migration or Go change. Preserve every original parent/descendant/style/image asset and accepted snapshot for rollback/restore. Policy exposes depth 2, four subreport elements per source document and eight expanded instances per sales row. Older workers cannot validate nested graphs; drain or preserve pending executions before rollback.
+
+## Small TrueType font assets
+
+V24 admits TTF files in the existing append-only template asset table. Deploy capable workers before admitting v5 font bundles or updating the upload UI. Preserve original TTF/JRXML/JRTX/PNG and descendant bytes with accepted snapshots during backup/rollback; non-font manifest domains remain unchanged. Only small pre-subset TrueType programs up to 8 KiB/256 glyphs and unrestricted embedding flags are admitted. No global font installation, new dependency or Go change is required.
+
+PDF embeds fonts and HTML packages exact TTF/CSS resources. Serve extracted HTML only from a separate static origin when testing font loading; application-origin inline HTML remains unsupported. Local file-viewer policies and office font substitution vary and are not certified. Missing rendered glyphs fail generation; provide a new reviewed template/font version to change coverage. See [ADR-021](adr/021-bounded-truetype-assets.md). No production restore validation is claimed.
+
+## Dataset summary subreports
+
+Deploy all capable core workers before accepting direct summary-section subreports or exposing the new upload guidance. These bundles use the v6 manifest domain in [ADR-022](adr/022-dataset-summary-subreports.md), including when combined with fonts; bundles without summaries retain their previous identities. No migration, dependency or Go contract change; V24 remains current. Preserve the original closure and accepted dataset for replay/restore and drain or preserve pending jobs before rollback to an older worker. Summary components receive only their immediate parent's rows, with a fresh cursor; arbitrary child queries/connections/mappings remain unsupported.
+
+## XLSX worksheet-name setting
+
+Deploy capable core workers before exposing `outputOptions.xlsxSheetName` or submitting it through JSON/YAML. Older codecs reject the new property. The optional name is retained in accepted configurations; preserve/drain affected pending jobs before rolling back to an older worker. Existing requests without a name retain their defaults and serialization. No migration, dependency or Go change; V24 remains current. [ADR-023](adr/023-xlsx-worksheet-names.md) defines admitted names and page suffixes.
+
+## CSV UTF-8 byte-order mark
+
+Deploy capable core workers before exposing `outputOptions.csvIncludeBom` or submitting it in JSON/YAML. Older codecs reject it. Preserve/drain affected pending jobs before rollback. Accepted true/false values are retained; omitted fields preserve current defaults and legacy serialization. Hashes and size limits cover the whole artifact, including the three-byte prefix. No migration, dependency, MIME or Go change; V24 remains current. [ADR-024](adr/024-csv-utf8-byte-order-mark.md) defines the byte and compatibility contract.

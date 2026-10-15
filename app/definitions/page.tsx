@@ -23,7 +23,10 @@ export default async function Definitions({
       ? query.template
       : undefined;
   const sourceReference =
-    query.dataSource && /^data:[0-9a-f]{64}$/.test(query.dataSource)
+    query.dataSource &&
+    /^(data:[0-9a-f]{64}|jdbc:sales-jdbc:[a-zA-Z0-9][a-zA-Z0-9 _-]{0,39})$/.test(
+      query.dataSource,
+    )
       ? query.dataSource
       : undefined;
   const [result, user] = await Promise.all([

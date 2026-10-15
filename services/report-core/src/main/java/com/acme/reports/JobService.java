@@ -1,11 +1,15 @@
 package com.acme.reports;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
@@ -14,19 +18,52 @@ public class JobService {
   private final ObjectMapper json;
   private final Renderer renderer;
 
-  JobService(JdbcTemplate db, ObjectMapper json, Renderer renderer) {
+  private final JdbcSalesAdapter jdbc;
+  private final SourceRegistry sources;
+  private final TransactionTemplate transaction;
+
+  JobService(
+      JdbcTemplate db,
+      ObjectMapper json,
+      Renderer renderer,
+      JdbcSalesAdapter jdbc,
+      SourceRegistry sources,
+      PlatformTransactionManager manager) {
     this.db = db;
     this.json = json;
     this.renderer = renderer;
+    this.jdbc = jdbc;
+    this.sources = sources;
+    this.transaction = new TransactionTemplate(manager);
   }
 
-  @Transactional
+  private record Admission(Map<String, Object> job, String category) {}
+
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   public Map<String, Object> submit(String subject, String key, ReportRequest request)
       throws Exception {
-    return accept(subject, key, request, null);
+    // Preflight validates resources and recovers committed keys before any external read.
+    var first = admission(subject, key, request, null);
+    if (first.job() != null) return first.job();
+    // No core transaction, advisory lock or mutable-definition lock spans this bounded read.
+    var rows = jdbc.read(first.category(), false);
+    return admission(subject, key, request, rows).job();
   }
 
-  @Transactional
+  private Admission admission(String subject, String key, ReportRequest request, JsonNode rows) {
+    return transaction.execute(
+        status -> {
+          try {
+            return admit(subject, key, request, null, rows, null, null);
+          } catch (RuntimeException e) {
+            throw e;
+          } catch (Exception e) {
+            throw new IllegalStateException("Job admission failed", e);
+          }
+        });
+  }
+
+  @Transactional(rollbackFor = Exception.class)
   public Map<String, Object> reprocess(String subject, String key, UUID parentId) throws Exception {
     // Owner lookup precedes all diagnostics so another subject cannot probe parent state.
     var parent = get(subject, parentId);
@@ -36,12 +73,29 @@ public class JobService {
           HttpStatus.CONFLICT, "Only terminal jobs can be reprocessed");
     var resolved = json.readTree((String) parent.get("configuration"));
     var request = json.treeToValue(resolved.path("request"), ReportRequest.class);
-    return accept(subject, key, request, parentId);
+    return admit(
+            subject,
+            key,
+            request,
+            parentId,
+            null,
+            resolved.path("datasetVersion").asText(),
+            resolved.hasNonNull("sourceImportId")
+                ? UUID.fromString(resolved.path("sourceImportId").asText())
+                : null)
+        .job();
   }
 
-  private Map<String, Object> accept(
-      String subject, String key, ReportRequest request, UUID parentId) throws Exception {
-    if (!key.matches("[a-zA-Z0-9_-]{8,128}"))
+  private Admission admit(
+      String subject,
+      String key,
+      ReportRequest request,
+      UUID parentId,
+      JsonNode capturedRows,
+      String reusedData,
+      UUID reusedImport)
+      throws Exception {
+    if (key == null || !key.matches("[a-zA-Z0-9_-]{8,128}"))
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid idempotency key");
     String canonical = json.writeValueAsString(request);
     String fingerprint =
@@ -59,7 +113,7 @@ public class JobService {
       if (!existing.getFirst().get("request_hash").equals(fingerprint))
         throw new ResponseStatusException(
             HttpStatus.CONFLICT, "Idempotency key has a different request");
-      return get(subject, (UUID) existing.getFirst().get("id"));
+      return new Admission(get(subject, (UUID) existing.getFirst().get("id")), null);
     }
     Integer active =
         db.queryForObject(
@@ -86,8 +140,33 @@ public class JobService {
     var definition = definitions.getFirst();
     String templateHash =
         TemplateController.resolve(db, renderer, definition.get("template_resource").toString());
+    String templateReference = definition.get("template_resource").toString();
+    TrustedTemplate.validateValues(
+        DefinitionController.TEMPLATE.equals(templateReference)
+            ? renderer.bundledTemplate()
+            : TemplateController.source(db, templateReference),
+        request.parameters().values());
     String dataReference = definition.get("data_source_ref").toString();
-    if (!"sample-v1".equals(dataReference)) StructuredData.load(db, json, dataReference);
+    boolean live = dataReference.startsWith(DefinitionController.JDBC_PREFIX);
+    if (live && reusedData != null) {
+      if (!reusedData.matches("data:[0-9a-f]{64}") || reusedImport == null)
+        throw new IllegalStateException("JDBC_SNAPSHOT_UNAVAILABLE");
+      if (db.queryForObject(
+              "SELECT count(*) FROM source_import WHERE id=? AND source_sha256=? AND"
+                  + " profile_ref='sales-jdbc' AND category=?",
+              Integer.class,
+              reusedImport,
+              reusedData.substring(5),
+              definition
+                  .get("data_source_ref")
+                  .toString()
+                  .substring(DefinitionController.JDBC_PREFIX.length()))
+          != 1) throw new IllegalStateException("JDBC_SNAPSHOT_UNAVAILABLE");
+      dataReference = reusedData;
+    }
+    if (!live || reusedData != null) {
+      if (!"sample-v1".equals(dataReference)) StructuredData.load(db, json, dataReference);
+    }
     // Resolve every mutable destination once, at acceptance, under shared locks in stable order.
     var snapshots = new LinkedHashMap<String, Map<String, Object>>();
     for (String reference :
@@ -115,6 +194,20 @@ public class JobService {
               HttpStatus.BAD_REQUEST, "Duplicate physical delivery target");
       }
     }
+    UUID sourceImport = reusedImport;
+    if (live && reusedData == null) {
+      String category =
+          definition
+              .get("data_source_ref")
+              .toString()
+              .substring(DefinitionController.JDBC_PREFIX.length());
+      if (!category.matches("[a-zA-Z0-9][a-zA-Z0-9 _-]{0,39}"))
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid JDBC category");
+      if (capturedRows == null) return new Admission(null, category);
+      var snapshot = sources.register("JDBC job snapshot", capturedRows, subject, category);
+      dataReference = "data:" + snapshot.source().get("sha256");
+      sourceImport = snapshot.importId();
+    }
     UUID id = UUID.randomUUID();
     Map<String, Object> config =
         new LinkedHashMap<>(
@@ -130,6 +223,7 @@ public class JobService {
                 "timezone",
                 request.parameters().resolvedTimeZone()));
     config.put("definition", definition);
+    if (sourceImport != null) config.put("sourceImportId", sourceImport);
     if ("1".equals(request.schemaVersion()))
       config.put("destination", snapshots.get(request.destinationRef()));
     else config.put("destinations", snapshots);
@@ -159,7 +253,7 @@ public class JobService {
           "INSERT INTO audit_event(actor,action,resource_id) VALUES (?,'JOB_REPROCESSED',?)",
           subject,
           id.toString());
-    return get(subject, id);
+    return new Admission(get(subject, id), null);
   }
 
   Map<String, Object> get(String subject, UUID id) {

@@ -42,6 +42,12 @@ export default async function DefinitionDetail({
         Template: <code>{d.template_resource}</code> · Dataset:{" "}
         {d.data_source_ref} · Locale: en-US · Time zone: UTC
       </p>
+      {d.data_source_ref.startsWith("jdbc:sales-jdbc:") && (
+        <p>
+          Each new job captures current JDBC rows. Accepted jobs, retries and
+          reprocessing use the saved snapshot.
+        </p>
+      )}
       {user.data.roles.includes("ROLE_REPORT_ADMIN") && (
         <DefinitionForm key={d.version} current={d} identity={user.data} />
       )}

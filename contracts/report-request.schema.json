@@ -15,7 +15,9 @@
       "properties": {
         "schemaVersion": {
           "type": "string",
-          "enum": ["1"]
+          "enum": [
+            "1"
+          ]
         },
         "definitionId": {
           "type": "string",
@@ -29,7 +31,9 @@
         "parameters": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["title"],
+          "required": [
+            "title"
+          ],
           "properties": {
             "title": {
               "type": "string",
@@ -38,12 +42,23 @@
               "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$"
             },
             "locale": {
-              "type": ["string", "null"],
-              "enum": ["en-US", "de-DE", "fr-FR", null],
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "en-US",
+                "de-DE",
+                "fr-FR",
+                null
+              ],
               "default": "en-US"
             },
             "timeZone": {
-              "type": ["string", "null"],
+              "type": [
+                "string",
+                "null"
+              ],
               "enum": [
                 "UTC",
                 "Asia/Kolkata",
@@ -52,6 +67,18 @@
                 null
               ],
               "default": "UTC"
+            },
+            "values": {
+              "type": "object",
+              "minProperties": 1,
+              "maxProperties": 8,
+              "propertyNames": {
+                "pattern": "^P_[A-Z][A-Z0-9_]{0,29}$"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/ParameterValue"
+              },
+              "description": "Every custom parameter declared by the selected trusted template is required; undeclared names/types are rejected at acceptance. Sorted names determine canonical serialization."
             }
           }
         },
@@ -61,15 +88,74 @@
           "maxItems": 1,
           "items": {
             "type": "string",
-            "enum": ["PDF", "XLSX", "CSV", "DOCX", "HTML"]
+            "enum": [
+              "PDF",
+              "XLSX",
+              "CSV",
+              "DOCX",
+              "HTML"
+            ]
           },
           "uniqueItems": true
         },
         "destinationRef": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9-]{2,63}$"
+        },
+        "outputOptions": {
+          "$ref": "#/$defs/OutputOptions"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "outputOptions"
+            ],
+            "properties": {
+              "outputOptions": {
+                "anyOf": [
+                  { "required": ["csvDelimiter"] },
+                  { "required": ["csvIncludeBom"] }
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "outputs": {
+                "contains": {
+                  "const": "CSV"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "outputOptions"
+            ],
+            "properties": {
+              "outputOptions": {
+                "anyOf": [
+                  { "required": ["xlsxOnePagePerSheet"] },
+                  { "required": ["xlsxSheetName"] }
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "outputs": {
+                "contains": {
+                  "const": "XLSX"
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     {
       "type": "object",
@@ -85,7 +171,9 @@
       "properties": {
         "schemaVersion": {
           "type": "string",
-          "enum": ["2"]
+          "enum": [
+            "2"
+          ]
         },
         "definitionId": {
           "type": "string",
@@ -99,7 +187,9 @@
         "parameters": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["title"],
+          "required": [
+            "title"
+          ],
           "properties": {
             "title": {
               "type": "string",
@@ -108,12 +198,23 @@
               "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$"
             },
             "locale": {
-              "type": ["string", "null"],
-              "enum": ["en-US", "de-DE", "fr-FR", null],
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "en-US",
+                "de-DE",
+                "fr-FR",
+                null
+              ],
               "default": "en-US"
             },
             "timeZone": {
-              "type": ["string", "null"],
+              "type": [
+                "string",
+                "null"
+              ],
               "enum": [
                 "UTC",
                 "Asia/Kolkata",
@@ -122,6 +223,18 @@
                 null
               ],
               "default": "UTC"
+            },
+            "values": {
+              "type": "object",
+              "minProperties": 1,
+              "maxProperties": 8,
+              "propertyNames": {
+                "pattern": "^P_[A-Z][A-Z0-9_]{0,29}$"
+              },
+              "additionalProperties": {
+                "$ref": "#/$defs/ParameterValue"
+              },
+              "description": "Every custom parameter declared by the selected trusted template is required; undeclared names/types are rejected at acceptance. Sorted names determine canonical serialization."
             }
           }
         },
@@ -131,7 +244,13 @@
           "maxItems": 5,
           "items": {
             "type": "string",
-            "enum": ["PDF", "XLSX", "CSV", "DOCX", "HTML"]
+            "enum": [
+              "PDF",
+              "XLSX",
+              "CSV",
+              "DOCX",
+              "HTML"
+            ]
           },
           "uniqueItems": true
         },
@@ -141,7 +260,13 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["PDF", "XLSX", "CSV", "DOCX", "HTML"]
+            "enum": [
+              "PDF",
+              "XLSX",
+              "CSV",
+              "DOCX",
+              "HTML"
+            ]
           }
         },
         "deliveries": {
@@ -151,7 +276,11 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["destinationRef", "outputs", "required"],
+            "required": [
+              "destinationRef",
+              "outputs",
+              "required"
+            ],
             "properties": {
               "destinationRef": {
                 "type": "string",
@@ -163,7 +292,13 @@
                 "maxItems": 5,
                 "items": {
                   "type": "string",
-                  "enum": ["PDF", "XLSX", "CSV", "DOCX", "HTML"]
+                  "enum": [
+                    "PDF",
+                    "XLSX",
+                    "CSV",
+                    "DOCX",
+                    "HTML"
+                  ]
                 },
                 "uniqueItems": true
               },
@@ -172,9 +307,203 @@
               }
             }
           }
+        },
+        "outputOptions": {
+          "$ref": "#/$defs/OutputOptions"
         }
       },
-      "description": "Explicit mappings. Optional outputs must be selected outputs, with at least one required output. Every output must have a mapping; each required output needs a required delivery. Required deliveries cannot depend on optional outputs. Duplicate destination/format pairs and physical targets are rejected. Backend enforces cross-field rules."
+      "description": "Explicit mappings. Optional outputs must be selected outputs, with at least one required output. Every output must have a mapping; each required output needs a required delivery. Required deliveries cannot depend on optional outputs. Duplicate destination/format pairs and physical targets are rejected. Backend enforces cross-field rules.",
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "outputOptions"
+            ],
+            "properties": {
+              "outputOptions": {
+                "anyOf": [
+                  { "required": ["csvDelimiter"] },
+                  { "required": ["csvIncludeBom"] }
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "outputs": {
+                "contains": {
+                  "const": "CSV"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "outputOptions"
+            ],
+            "properties": {
+              "outputOptions": {
+                "anyOf": [
+                  { "required": ["xlsxOnePagePerSheet"] },
+                  { "required": ["xlsxSheetName"] }
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "outputs": {
+                "contains": {
+                  "const": "XLSX"
+                }
+              }
+            }
+          }
+        }
+      ]
     }
-  ]
+  ],
+  "$defs": {
+    "OutputOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "csvDelimiter": {
+          "type": "string",
+          "enum": [
+            "COMMA",
+            "SEMICOLON",
+            "TAB"
+          ],
+          "description": "CSV field delimiter; UTF-8, CRLF and formula escaping remain mandatory."
+        },
+        "csvIncludeBom": {
+          "type": "boolean",
+          "description": "Include a UTF-8 byte-order mark at the start of CSV when true; false omits it. Default: no BOM. Only valid with CSV selected; UTF-8, CRLF and formula protection remain mandatory."
+        },
+        "xlsxOnePagePerSheet": {
+          "type": "boolean",
+          "description": "Export each Jasper report page as a separate worksheet when true."
+        },
+        "xlsxSheetName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 31,
+          "pattern": "^(?![Hh][Ii][Ss][Tt][Oo][Rr][Yy]$)[A-Za-z0-9](?:[A-Za-z0-9 ._-]{0,29}[A-Za-z0-9._-])?$",
+          "description": "XLSX base worksheet name: ASCII letters/digits, spaces, periods, underscores and hyphens; start alphanumeric, no trailing space, History reserved. Additional worksheets append numbered suffixes, shortening the base to fit 31 characters. Omit to preserve template/platform names."
+        }
+      },
+      "description": "Nonempty options applying only to selected formats. Omit to preserve existing defaults and request fingerprints."
+    },
+    "ParameterValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "TEXT"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "INTEGER"
+              ]
+            },
+            "value": {
+              "type": "integer",
+              "minimum": -1000000,
+              "maximum": 1000000
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "DECIMAL"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^-?(0|[1-9][0-9]{0,11})(\\.[0-9]{1,4})?$",
+              "description": "Decimal as a string to preserve exact precision."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "BOOLEAN"
+              ]
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "DATE"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(19[0-9]{2}|20[0-9]{2}|2100)-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+            }
+          }
+        }
+      ]
+    }
+  }
 }

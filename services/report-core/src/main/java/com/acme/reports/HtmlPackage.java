@@ -14,9 +14,22 @@ final class HtmlPackage {
   static final int MAX_RESOURCES = 128;
 
   static byte[] export(JasperPrint print) throws JRException {
+    return export(print, DefaultJasperReportsContext.getInstance());
+  }
+
+  static byte[] export(JasperPrint print, JasperReportsContext context) throws JRException {
     var resources = new Resources();
     var html = new ByteArrayOutputStream();
-    var exporter = new HtmlExporter();
+    var fontResources = new FontResources(resources);
+    var exporter =
+        new HtmlExporter(context) {
+          @Override
+          public void addFontFamily(HtmlFontFamily family) {
+            if (fontsToProcess.putIfAbsent(family.getId(), family) == null)
+              HtmlFontUtil.getInstance(context)
+                  .handleHtmlFont(fontResources, fontResources, fontResources, family, true, true);
+          }
+        };
     var settings = new SimpleHtmlReportConfiguration();
     settings.setOverrideHints(true);
     settings.setIgnoreHyperlink(true);
@@ -27,8 +40,8 @@ final class HtmlPackage {
     wrapper.setHtmlHeader(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\"><meta"
             + " http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self'"
-            + " data:; style-src 'unsafe-inline'; font-src 'self'; base-uri 'none'; form-action"
-            + " 'none'\"><meta name=\"viewport\" content=\"width=device-width,"
+            + " data:; style-src 'self' 'unsafe-inline'; font-src 'self'; base-uri 'none';"
+            + " form-action 'none'\"><meta name=\"viewport\" content=\"width=device-width,"
             + " initial-scale=1\"><title>Report</title></head><body>");
     wrapper.setHtmlFooter("</body></html>");
     var output =
@@ -49,7 +62,7 @@ final class HtmlPackage {
             },
             "UTF-8");
     output.setImageHandler(resources);
-    output.setFontHandler(resources);
+    output.setFontHandler(fontResources);
     output.setResourceHandler(resources);
     exporter.setExporterInput(new SimpleExporterInput(print));
     exporter.setExporterOutput(output);
@@ -57,9 +70,36 @@ final class HtmlPackage {
     exporter.setConfiguration(wrapper);
     try {
       exporter.exportReport();
-      return resources.pack(html.toByteArray());
+      String document =
+          html.toString(StandardCharsets.UTF_8)
+              .replaceAll("(?s)<!--\\[if IE]>\\s*<script>.*?</script>\\s*<!\\[endif]-->", "");
+      if (document.toLowerCase(Locale.ROOT).contains("<script"))
+        throw new IOException("Executable HTML output rejected");
+      return resources.pack(document.getBytes(StandardCharsets.UTF_8));
     } catch (IOException | IllegalArgumentException e) {
       throw new JRException("HTML_PACKAGE_FAILED", e);
+    }
+  }
+
+  private record FontResources(Resources resources) implements HtmlResourceHandler {
+    private String safe(String id) {
+      if (id == null || (!id.endsWith(".css") && !id.endsWith(".ttf")))
+        throw new IllegalArgumentException("Unsupported generated font resource");
+      return "font-"
+          + Renderer.sha256(id.getBytes(StandardCharsets.UTF_8))
+          + (id.endsWith(".css") ? ".css" : ".ttf");
+    }
+
+    @Override
+    public String getResourcePath(String id) {
+      String path = resources.getResourcePath(safe(id));
+      // Font URLs are inside a stylesheet in assets/, whereas its link is in index.html.
+      return id.endsWith(".css") ? path : path.substring("assets/".length());
+    }
+
+    @Override
+    public void handleResource(String id, byte[] bytes) {
+      resources.handleResource(safe(id), bytes);
     }
   }
 

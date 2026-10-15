@@ -18,7 +18,14 @@ import org.testcontainers.junit.jupiter.*;
 
 @JdbcTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({JobService.class, Renderer.class, JobPersistenceTest.JsonConfig.class})
+@Import({
+  JobService.class,
+  Renderer.class,
+  JdbcSalesAdapter.class,
+  JdbcSalesMapping.class,
+  SourceRegistry.class,
+  JobPersistenceTest.JsonConfig.class
+})
 @Testcontainers
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class JobPersistenceTest {

@@ -76,8 +76,8 @@ export default function DefinitionForm({
     <form className="panel" onSubmit={submit} aria-busy={busy}>
       <h2>{current ? "Publish next version" : "Register definition"}</h2>
       <p>
-        Uses a bundled or registered trusted template and structured dataset.
-        Copy exact references from Templates and Data sources.
+        Uses a bundled or registered trusted template and a structured or JDBC
+        data source. Copy exact references from Templates and Data sources.
       </p>
       <fieldset disabled={busy}>
         <legend>Definition configuration</legend>
@@ -124,10 +124,17 @@ export default function DefinitionForm({
           <input
             required
             value={source}
-            pattern="sample-v1|data:[0-9a-f]{64}"
+            pattern="sample-v1|data:[0-9a-f]{64}|jdbc:sales-jdbc:[a-zA-Z0-9][a-zA-Z0-9 _\-]{0,39}"
             onChange={(e) => setSource(e.target.value)}
           />
         </label>
+        <p className="muted">
+          Use sample-v1, an immutable data: fingerprint, or
+          jdbc:sales-jdbc:stationery to capture current JDBC rows for each new
+          job. Retries and reprocessing reuse the accepted snapshot. JDBC
+          categories contain 1–40 letters, digits, spaces, underscores or
+          hyphens and start with a letter or digit.
+        </p>
         <label className="check-label">
           <input
             type="checkbox"

@@ -88,6 +88,143 @@ class MultiOutputTest {
     return id;
   }
 
+  @Test
+  void outputOptionsAreSnapshottedRenderedAndChangeIdempotency() throws Exception {
+    var request =
+        new ReportRequest(
+            "1",
+            "sales-summary",
+            1,
+            new ReportRequest.Parameters("=Option;test"),
+            List.of("CSV"),
+            "local-s3",
+            null,
+            null,
+            new ReportRequest.OutputOptions("SEMICOLON", null));
+    String key = UUID.randomUUID().toString();
+    var accepted = jobs.submit("multi-owner", key, request);
+    assertThat(jobs.submit("multi-owner", key, request).get("id")).isEqualTo(accepted.get("id"));
+    var changed =
+        new ReportRequest(
+            "1",
+            "sales-summary",
+            1,
+            request.parameters(),
+            request.outputs(),
+            request.destinationRef(),
+            null,
+            null,
+            new ReportRequest.OutputOptions("TAB", null));
+    assertThatThrownBy(() -> jobs.submit("multi-owner", key, changed))
+        .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+        .hasMessageContaining("409");
+    UUID id = stage(request);
+    var snapshot =
+        json.readTree(
+            db.queryForObject(
+                "SELECT resolved_config::text FROM report_job WHERE id=?", String.class, id));
+    assertThat(snapshot.path("request").path("outputOptions").path("csvDelimiter").asText())
+        .isEqualTo("SEMICOLON");
+    var artifact = db.queryForMap("SELECT * FROM report_artifact WHERE job_id=?", id);
+    String csv =
+        java.nio.file.Files.readString(renderer.path((String) artifact.get("storage_key")));
+    assertThat(csv).contains("\"'=Option;test\"", ";", "240.00", "\r\n");
+  }
+
+  @Test
+  void worksheetNameIsPinnedAndChangesIdempotency() throws Exception {
+    var request =
+        new ReportRequest(
+            "1",
+            "sales-summary",
+            1,
+            new ReportRequest.Parameters("Named workbook"),
+            List.of("XLSX"),
+            "local-s3",
+            null,
+            null,
+            new ReportRequest.OutputOptions(null, true, "Quarterly Sales"));
+    String key = UUID.randomUUID().toString();
+    var accepted = jobs.submit("sheet-owner", key, request);
+    assertThat(jobs.submit("sheet-owner", key, request).get("id")).isEqualTo(accepted.get("id"));
+    var changed =
+        new ReportRequest(
+            "1",
+            "sales-summary",
+            1,
+            request.parameters(),
+            request.outputs(),
+            request.destinationRef(),
+            null,
+            null,
+            new ReportRequest.OutputOptions(null, true, "Revised Sales"));
+    assertThatThrownBy(() -> jobs.submit("sheet-owner", key, changed))
+        .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+        .hasMessageContaining("409");
+    UUID id = stage(request);
+    var snapshot =
+        json.readTree(
+            db.queryForObject(
+                "SELECT resolved_config::text FROM report_job WHERE id=?", String.class, id));
+    assertThat(snapshot.path("request").path("outputOptions").path("xlsxSheetName").asText())
+        .isEqualTo("Quarterly Sales");
+    String storage =
+        db.queryForObject(
+            "SELECT storage_key FROM report_artifact WHERE job_id=?", String.class, id);
+    assertThat(WorksheetNamesTest.names(java.nio.file.Files.readAllBytes(renderer.path(storage))))
+        .containsExactly("Quarterly Sales");
+  }
+
+  @Test
+  void csvBomIsPinnedRenderedAndChangesIdempotency() throws Exception {
+    var request =
+        new ReportRequest(
+            "1",
+            "sales-summary",
+            1,
+            new ReportRequest.Parameters("=Résumé;東京"),
+            List.of("CSV"),
+            "local-s3",
+            null,
+            null,
+            new ReportRequest.OutputOptions("SEMICOLON", null, null, true));
+    String key = UUID.randomUUID().toString();
+    var accepted = jobs.submit("bom-owner", key, request);
+    assertThat(jobs.submit("bom-owner", key, request).get("id")).isEqualTo(accepted.get("id"));
+    var changed =
+        new ReportRequest(
+            "1",
+            "sales-summary",
+            1,
+            request.parameters(),
+            request.outputs(),
+            request.destinationRef(),
+            null,
+            null,
+            new ReportRequest.OutputOptions("SEMICOLON", null, null, false));
+    assertThatThrownBy(() -> jobs.submit("bom-owner", key, changed))
+        .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+        .hasMessageContaining("409");
+    UUID id = stage(request);
+    var snapshot =
+        json.readTree(
+            db.queryForObject(
+                "SELECT resolved_config::text FROM report_job WHERE id=?", String.class, id));
+    assertThat(snapshot.path("request").path("outputOptions").path("csvIncludeBom").booleanValue())
+        .isTrue();
+    String storage =
+        db.queryForObject(
+            "SELECT storage_key FROM report_artifact WHERE job_id=?", String.class, id);
+    byte[] bytes = java.nio.file.Files.readAllBytes(renderer.path(storage));
+    assertThat(bytes).startsWith((byte) 0xef, (byte) 0xbb, (byte) 0xbf);
+    assertThat(new String(bytes, java.nio.charset.StandardCharsets.UTF_8))
+        .contains("\"'=Résumé;東京\"", ";240.00", "\r\n");
+    assertThat(
+            db.queryForObject(
+                "SELECT sha256 FROM report_artifact WHERE job_id=?", String.class, id))
+        .isEqualTo(Renderer.sha256(bytes));
+  }
+
   void receipt(Map<String, Object> task, boolean success) throws Exception {
     var body =
         Map.of(

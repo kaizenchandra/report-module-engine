@@ -17,7 +17,8 @@ public record ReportRequest(
     @Pattern(regexp = "[a-z][a-z0-9-]{2,63}") String destinationRef,
     @Size(max = 4)
         List<@NotNull @Pattern(regexp = "PDF|XLSX|CSV|DOCX|HTML") String> optionalOutputs,
-    @Size(min = 1, max = 6) List<@NotNull @Valid Delivery> deliveries) {
+    @Size(min = 1, max = 6) List<@NotNull @Valid Delivery> deliveries,
+    @Valid OutputOptions outputOptions) {
   // Keep the v1 JSON serialization and request fingerprint unchanged for lost-ACK recovery.
   public ReportRequest(
       String schemaVersion,
@@ -34,14 +35,81 @@ public record ReportRequest(
         outputs,
         destinationRef,
         null,
+        null,
         null);
+  }
+
+  public ReportRequest(
+      String schemaVersion,
+      String definitionId,
+      Integer definitionVersion,
+      Parameters parameters,
+      List<String> outputs,
+      String destinationRef,
+      List<String> optionalOutputs,
+      List<Delivery> deliveries) {
+    this(
+        schemaVersion,
+        definitionId,
+        definitionVersion,
+        parameters,
+        outputs,
+        destinationRef,
+        optionalOutputs,
+        deliveries,
+        null);
+  }
+
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  public record OutputOptions(
+      @Pattern(regexp = "COMMA|SEMICOLON|TAB") String csvDelimiter,
+      Boolean xlsxOnePagePerSheet,
+      @Pattern(regexp = SHEET_NAME) String xlsxSheetName,
+      Boolean csvIncludeBom) {
+    public OutputOptions(String csvDelimiter, Boolean xlsxOnePagePerSheet, String xlsxSheetName) {
+      this(csvDelimiter, xlsxOnePagePerSheet, xlsxSheetName, null);
+    }
+
+    static final String SHEET_NAME =
+        "(?![Hh][Ii][Ss][Tt][Oo][Rr][Yy]$)[A-Za-z0-9](?:[A-Za-z0-9 ._-]{0,29}[A-Za-z0-9._-])?";
+
+    public OutputOptions(String csvDelimiter, Boolean xlsxOnePagePerSheet) {
+      this(csvDelimiter, xlsxOnePagePerSheet, null, null);
+    }
+  }
+
+  @JsonIgnore
+  @AssertTrue(
+      message = "Output options must be nonempty and apply only to selected CSV/XLSX outputs")
+  public boolean isOutputOptionsValid() {
+    if (outputOptions == null) return true;
+    return outputs != null
+        && (outputOptions.csvDelimiter() != null
+            || outputOptions.xlsxOnePagePerSheet() != null
+            || outputOptions.xlsxSheetName() != null
+            || outputOptions.csvIncludeBom() != null)
+        && (outputOptions.csvDelimiter() == null || outputs.contains("CSV"))
+        && (outputOptions.csvIncludeBom() == null || outputs.contains("CSV"))
+        && (outputOptions.xlsxOnePagePerSheet() == null || outputs.contains("XLSX"))
+        && (outputOptions.xlsxSheetName() == null || outputs.contains("XLSX"));
   }
 
   @JsonInclude(JsonInclude.Include.NON_NULL)
   public record Parameters(
       @NotBlank @Size(max = 100) @Pattern(regexp = "[^\\p{Cntrl}]+") String title,
       @Pattern(regexp = "en-US|de-DE|fr-FR") String locale,
-      @Pattern(regexp = "UTC|Asia/Kolkata|America/New_York|Europe/Berlin") String timeZone) {
+      @Pattern(regexp = "UTC|Asia/Kolkata|America/New_York|Europe/Berlin") String timeZone,
+      @Size(min = 1, max = 8)
+          Map<@Pattern(regexp = "P_[A-Z][A-Z0-9_]{0,29}") String, @NotNull @Valid ParameterValue>
+              values) {
+    public Parameters {
+      if (values != null) values = Collections.unmodifiableMap(new TreeMap<>(values));
+    }
+
+    public Parameters(String title, String locale, String timeZone) {
+      this(title, locale, timeZone, null);
+    }
+
     public Parameters(String title) {
       this(title, null, null);
     }
@@ -52,6 +120,67 @@ public record ReportRequest(
 
     public String resolvedTimeZone() {
       return timeZone == null ? "UTC" : timeZone;
+    }
+  }
+
+  public record ParameterValue(
+      @NotNull @Pattern(regexp = "TEXT|INTEGER|DECIMAL|BOOLEAN|DATE") String type,
+      @NotNull com.fasterxml.jackson.databind.JsonNode value) {
+    public ParameterValue {
+      if ("INTEGER".equals(type)
+          && value != null
+          && value.isIntegralNumber()
+          && value.canConvertToInt())
+        value = com.fasterxml.jackson.databind.node.IntNode.valueOf(value.intValue());
+    }
+
+    @JsonIgnore
+    @AssertTrue(message = "Parameter value must match its type and permitted range")
+    public boolean isValueValid() {
+      if (type == null || value == null || value.isNull()) return false;
+      return switch (type) {
+        case "TEXT" ->
+            value.isTextual()
+                && value.textValue().length() <= 200
+                && value.textValue().matches("[^\\p{Cc}]*");
+        case "INTEGER" ->
+            value.isIntegralNumber()
+                && value.canConvertToInt()
+                && Math.abs((long) value.intValue()) <= 1000000;
+        case "DECIMAL" ->
+            value.isTextual()
+                && value.textValue().matches("-?(0|[1-9][0-9]{0,11})(\\.[0-9]{1,4})?");
+        case "BOOLEAN" -> value.isBoolean();
+        case "DATE" -> validDate(value);
+        default -> false;
+      };
+    }
+
+    private static boolean validDate(com.fasterxml.jackson.databind.JsonNode value) {
+      if (!value.isTextual() || !value.textValue().matches("[0-9]{4}-[0-9]{2}-[0-9]{2}"))
+        return false;
+      try {
+        int year = java.time.LocalDate.parse(value.textValue()).getYear();
+        return year >= 1900 && year <= 2100;
+      } catch (java.time.DateTimeException e) {
+        return false;
+      }
+    }
+
+    Object jasperValue(String zone, boolean csv) {
+      if (!isValueValid()) throw new IllegalArgumentException("Invalid typed parameter");
+      return switch (type) {
+        case "TEXT" -> csv ? "'" + value.textValue() : value.textValue();
+        case "INTEGER" -> value.intValue();
+        case "DECIMAL" -> new java.math.BigDecimal(value.textValue());
+        case "BOOLEAN" -> value.booleanValue();
+        case "DATE" ->
+            Date.from(
+                java.time.LocalDate.parse(value.textValue())
+                    .atStartOfDay(java.time.ZoneId.of(zone))
+                    .toInstant());
+        default -> throw new IllegalArgumentException("Unsupported parameter type");
+      };
     }
   }
 

@@ -304,6 +304,9 @@ test("operator registers, verifies and versions a destination through OIDC", asy
 
 // Read one bounded ZIP entry from an actual generated workbook, using its central directory.
 function workbookEntry(bytes: Buffer, name: string): string {
+  return zipEntryBytes(bytes, name).toString("utf8");
+}
+function zipEntryBytes(bytes: Buffer, name: string): Buffer {
   const end = bytes.lastIndexOf(Buffer.from("504b0506", "hex"));
   if (end < 0) throw new Error("Workbook ZIP directory missing");
   let offset = bytes.readUInt32LE(end + 16);
@@ -325,7 +328,7 @@ function workbookEntry(bytes: Buffer, name: string): string {
         bytes.readUInt16LE(offset + 10) === 8
           ? inflateRawSync(compressed, { maxOutputLength: 10 * 1024 * 1024 })
           : compressed;
-      return result.toString("utf8");
+      return result;
     }
     offset +=
       46 +
@@ -1205,6 +1208,14 @@ test("JDBC connection check and snapshot import drive a verified report", async 
   test.setTimeout(90000);
   await login(page, "operator");
   await page.goto("/data-sources");
+  const profileResponse = await page.request.get("/backend/api/v1/jdbc-source");
+  expect(profileResponse.status()).toBe(200);
+  const profile = await profileResponse.json();
+  expect(profile.adapter).toBe("postgres-sales-v2");
+  expect(profile.mappingSha256).toMatch(/^[0-9a-f]{64}$/);
+  await expect(page.getByLabel("JDBC mapping fingerprint")).toHaveText(
+    `sha256:${profile.mappingSha256}`,
+  );
   const form = page.getByRole("group", { name: "JDBC snapshot configuration" });
   await form.getByRole("button", { name: "Test JDBC connection" }).click();
   await expect(page.getByRole("status")).toContainText(
@@ -1224,6 +1235,22 @@ test("JDBC connection check and snapshot import drive a verified report", async 
     .click();
   await expect(page).toHaveURL(/\/definitions\?dataSource=data:[0-9a-f]{64}$/);
   const reference = new URL(page.url()).searchParams.get("dataSource")!;
+  const imports = await (
+    await page.request.get("/backend/api/v1/jdbc-source/imports")
+  ).json();
+  expect(
+    imports.some(
+      (item: {
+        source_sha256: string;
+        mapping_sha256: string;
+        adapter_version: string;
+      }) =>
+        item.source_sha256 === reference.substring(5) &&
+        item.mapping_sha256 === profile.mappingSha256 &&
+        item.adapter_version === "postgres-sales-v2",
+    ),
+  ).toBe(true);
+
   const definition = page.getByRole("group", {
     name: "Definition configuration",
   });
@@ -1501,4 +1528,1138 @@ test("owner previews retained PDF pages and retries a preview failure without re
   } finally {
     await other.close();
   }
+});
+
+for (const variant of ["CSV", "XLSX", "CSV with BOM"] as const) {
+  test(`output settings survive form JSON YAML and govern delivered ${variant}`, async ({
+    page,
+  }) => {
+    test.setTimeout(90000);
+    const outputFormat = variant === "XLSX" ? "XLSX" : "CSV";
+    const includeBom = variant === "CSV with BOM";
+    const title = includeBom ? "=Résumé;東京" : "=Output;settings";
+    await login(page);
+    await page.goto("/jobs/new");
+    await page.getByLabel("Report title", { exact: true }).fill(title);
+    await page.getByLabel("Output format").selectOption("CSV");
+    await page.getByLabel("CSV field delimiter").selectOption("SEMICOLON");
+    if (includeBom)
+      await page.getByLabel("CSV UTF-8 byte-order mark").selectOption("false");
+    await page.getByRole("button", { name: "Edit JSON / YAML" }).click();
+    const editor = page.getByLabel("Declarative configuration");
+    const configured = JSON.parse(await editor.inputValue());
+    expect(configured.outputOptions).toEqual(
+      includeBom
+        ? { csvDelimiter: "SEMICOLON", csvIncludeBom: false }
+        : { csvDelimiter: "SEMICOLON" },
+    );
+    await editor.fill(
+      JSON.stringify({
+        ...configured,
+        outputOptions: { csvDelimiter: "PIPE" },
+      }),
+    );
+    await page.getByRole("button", { name: "Use parameter form" }).click();
+    await expect(
+      page
+        .getByRole("group", { name: "Report configuration" })
+        .getByRole("alert"),
+    ).toContainText("csvDelimiter");
+    if (includeBom) {
+      await editor.fill(
+        JSON.stringify({
+          ...configured,
+          outputOptions: { ...configured.outputOptions, csvIncludeBom: "true" },
+        }),
+      );
+      await page.getByRole("button", { name: "Use parameter form" }).click();
+      await expect(
+        page
+          .getByRole("group", { name: "Report configuration" })
+          .getByRole("alert"),
+      ).toContainText("Malformed configuration");
+    }
+    await editor.fill(JSON.stringify(configured));
+    await page.getByLabel("Configuration syntax").selectOption("yaml");
+    await expect(page.getByLabel("Configuration syntax")).toHaveValue("yaml");
+    await page.getByRole("button", { name: "Use parameter form" }).click();
+    await expect(page.getByLabel("CSV field delimiter")).toHaveValue(
+      "SEMICOLON",
+    );
+    if (includeBom)
+      await expect(page.getByLabel("CSV UTF-8 byte-order mark")).toHaveValue(
+        "false",
+      );
+    // Settings for deselected formats do not leak into another output request.
+    await page.getByLabel("Output format").selectOption("XLSX");
+    await page.getByLabel("XLSX worksheet layout").selectOption("true");
+    await page
+      .getByLabel("XLSX worksheet name (optional)")
+      .fill("Quarterly Sales");
+    await page.getByRole("button", { name: "Edit JSON / YAML" }).click();
+    expect(JSON.parse(await editor.inputValue()).outputOptions).toEqual({
+      xlsxOnePagePerSheet: true,
+      xlsxSheetName: "Quarterly Sales",
+    });
+    const xlsxRequest = JSON.parse(await editor.inputValue());
+    await editor.fill(
+      JSON.stringify({
+        ...xlsxRequest,
+        outputOptions: {
+          ...xlsxRequest.outputOptions,
+          xlsxSheetName: "Bad/Name",
+        },
+      }),
+    );
+    await page.getByRole("button", { name: "Use parameter form" }).click();
+    await expect(
+      page
+        .getByRole("group", { name: "Report configuration" })
+        .getByRole("alert"),
+    ).toContainText("xlsxSheetName");
+    await editor.fill(JSON.stringify(xlsxRequest));
+    await page.getByLabel("Configuration syntax").selectOption("yaml");
+    await expect(page.getByLabel("Configuration syntax")).toHaveValue("yaml");
+    await page.getByRole("button", { name: "Use parameter form" }).click();
+    await expect(page.getByLabel("XLSX worksheet layout")).toHaveValue("true");
+    await expect(page.getByLabel("XLSX worksheet name (optional)")).toHaveValue(
+      "Quarterly Sales",
+    );
+    if (outputFormat === "CSV") {
+      await page.getByLabel("Output format").selectOption("CSV");
+      // Returning from an XLSX-only declarative request restores only that request's options.
+      await expect(page.getByLabel("CSV field delimiter")).toHaveValue("");
+      await page.getByLabel("CSV field delimiter").selectOption("SEMICOLON");
+      await expect(page.getByLabel("CSV UTF-8 byte-order mark")).toHaveValue(
+        "",
+      );
+      if (includeBom) {
+        await page.getByLabel("CSV UTF-8 byte-order mark").selectOption("true");
+        await page.getByRole("button", { name: "Edit JSON / YAML" }).click();
+        await page.getByLabel("Configuration syntax").selectOption("yaml");
+        await expect(page.getByLabel("Configuration syntax")).toHaveValue(
+          "yaml",
+        );
+        await page.getByRole("button", { name: "Use parameter form" }).click();
+        await expect(page.getByLabel("CSV UTF-8 byte-order mark")).toHaveValue(
+          "true",
+        );
+      }
+    }
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    await page
+      .getByRole("button", { name: "Submit report", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+    await expect(page.getByRole("status")).toHaveText("SUCCEEDED", {
+      timeout: 60000,
+    });
+    const job = await (
+      await page.request.get(
+        `/backend/api/v1/jobs/${page.url().split("/").at(-1)}`,
+      )
+    ).json();
+    expect(JSON.parse(job.configuration).request.outputOptions).toEqual(
+      outputFormat === "CSV"
+        ? {
+            csvDelimiter: "SEMICOLON",
+            ...(includeBom ? { csvIncludeBom: true } : {}),
+          }
+        : { xlsxOnePagePerSheet: true, xlsxSheetName: "Quarterly Sales" },
+    );
+    const output = await page.request.get(
+      `/backend/api/v1/jobs/${job.id}/outputs/${job.artifacts[0].id}`,
+    );
+    expect(output.status()).toBe(200);
+    const bytes = await output.body();
+    if (outputFormat === "CSV") {
+      const bom = Buffer.from([0xef, 0xbb, 0xbf]);
+      expect(bytes.subarray(0, 3).equals(bom)).toBe(includeBom);
+      expect(bytes.toString()).toContain("\"'" + title + '"');
+      expect(bytes.toString()).toContain(";240.00");
+      expect(bytes.toString()).toContain("\r\n");
+    } else {
+      expect(workbookEntry(bytes, "xl/workbook.xml")).toContain(
+        'name="Quarterly Sales"',
+      );
+      expect(workbookEntry(bytes, "xl/sharedStrings.xml")).toContain(
+        "=Output;settings",
+      );
+      expect(workbookEntry(bytes, "xl/worksheets/sheet1.xml")).not.toContain(
+        "<f>",
+      );
+    }
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+      job.artifacts[0].sha256,
+    );
+    expect(job.deliveries[0].status).toBe("VERIFIED");
+    const cloud = await page.request.get(
+      `http://localhost:9000/report-results/${job.deliveries[0].object_key}`,
+    );
+    expect(cloud.status()).toBe(200);
+    expect(await cloud.body()).toEqual(bytes);
+  });
+}
+
+test("typed template parameters load recover and survive JSON YAML before real delivery", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await login(page, "operator");
+  const id = `browser-typed-${randomUUID()}`;
+  const source = (
+    await readFile("examples/typed-parameters.jrxml", "utf8")
+  ).replace("Sales summary | Synthetic demonstration data | USD | UTC", id);
+  await page.goto("/templates");
+  const upload = page.getByRole("group", {
+    name: "Trusted template registration",
+  });
+  await upload.getByLabel("Template name").fill("Typed browser fixture");
+  await upload.getByLabel("JRXML file").setInputFiles({
+    name: "typed.jrxml",
+    mimeType: "application/xml",
+    buffer: Buffer.from(source),
+  });
+  await upload
+    .getByLabel("I reviewed this executable template and trust its code.")
+    .check();
+  await upload
+    .getByRole("button", {
+      name: "Validate and register template",
+      exact: true,
+    })
+    .click();
+  const sha = createHash("sha256").update(source).digest("hex");
+  await expect(page).toHaveURL(
+    new RegExp(`/definitions\\?template=sha256:${sha}$`),
+  );
+  const definition = page.getByRole("group", {
+    name: "Definition configuration",
+  });
+  await definition.getByLabel("Definition ID").fill(id);
+  await definition.getByLabel("Definition name").fill("Typed browser report");
+  await definition
+    .getByRole("button", { name: "Register definition", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/definitions/${id}$`));
+  const metadata = `**/backend/api/v1/definitions/${id}/versions/1/parameters`;
+  await page.route(metadata, (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/problem+json",
+      body: '{"status":503}',
+    }),
+  );
+  await page
+    .getByRole("link", { name: "Generate version 1", exact: true })
+    .click();
+  await expect(
+    page.getByText("Template parameters unavailable. Retry to load the form."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Submit report", exact: true }),
+  ).toBeDisabled();
+  await page.unroute(metadata);
+  await page.getByRole("button", { name: "Retry parameter loading" }).click();
+  const fields = page.getByRole("group", {
+    name: "Template parameters",
+    exact: true,
+  });
+  await expect(fields).toBeVisible();
+  await fields.getByLabel("P_NOTE (TEXT)").fill("=Typed;note");
+  await fields.getByLabel("P_COUNT (INTEGER)").fill("7");
+  await fields.getByLabel("P_RATE (DECIMAL)").fill("12.3400");
+  await fields.getByLabel("P_APPROVED (BOOLEAN)").selectOption("false");
+  await fields.getByLabel("P_AS_OF (DATE)").fill("2024-03-10");
+  await page.getByLabel("Report time zone").selectOption("America/New_York");
+  await page.getByLabel("Output format").selectOption("CSV");
+  await page.getByLabel("CSV field delimiter").selectOption("SEMICOLON");
+  await page.getByRole("button", { name: "Edit JSON / YAML" }).click();
+  const editor = page.getByLabel("Declarative configuration");
+  const request = JSON.parse(await editor.inputValue());
+  expect(request.parameters.values.P_APPROVED).toEqual({
+    type: "BOOLEAN",
+    value: false,
+  });
+  expect(request.parameters.values.P_COUNT).toEqual({
+    type: "INTEGER",
+    value: 7,
+  });
+  expect(request.parameters.values.P_RATE).toEqual({
+    type: "DECIMAL",
+    value: "12.3400",
+  });
+  await editor.fill(
+    JSON.stringify({
+      ...request,
+      parameters: {
+        ...request.parameters,
+        values: {
+          ...request.parameters.values,
+          P_EXTRA: { type: "TEXT", value: "undeclared" },
+        },
+      },
+    }),
+  );
+  await page.getByRole("button", { name: "Use parameter form" }).click();
+  await expect(
+    page
+      .getByRole("group", { name: "Report configuration" })
+      .getByRole("alert"),
+  ).toContainText("do not match the selected template");
+  await editor.fill(JSON.stringify(request));
+  await page.getByLabel("Configuration syntax").selectOption("yaml");
+  await expect(page.getByLabel("Configuration syntax")).toHaveValue("yaml");
+  await page.getByRole("button", { name: "Use parameter form" }).click();
+  await expect(fields.getByLabel("P_RATE (DECIMAL)")).toHaveValue("12.3400");
+  await expect(fields.getByLabel("P_APPROVED (BOOLEAN)")).toHaveValue("false");
+  await expect(fields.getByLabel("P_COUNT (INTEGER)")).toHaveValue("7");
+  await expect(fields.getByLabel("P_AS_OF (DATE)")).toHaveValue("2024-03-10");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page
+    .getByRole("button", { name: "Submit report", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("status")).toHaveText("SUCCEEDED", {
+    timeout: 60000,
+  });
+  const job = await (
+    await page.request.get(
+      `/backend/api/v1/jobs/${page.url().split("/").at(-1)}`,
+    )
+  ).json();
+  expect(JSON.parse(job.configuration).request.parameters.values).toEqual(
+    request.parameters.values,
+  );
+  expect(JSON.parse(job.configuration).templateSha256).toBe(sha);
+  const download = await page.request.get(
+    `/backend/api/v1/jobs/${job.id}/outputs/${job.artifacts[0].id}`,
+  );
+  expect(download.status()).toBe(200);
+  const bytes = await download.body();
+  expect(bytes.toString()).toContain('"\'=Typed;note"');
+  expect(bytes.toString()).toContain("Count=7:Integer");
+  expect(bytes.toString()).toContain("Rate=12.3400:BigDecimal");
+  expect(bytes.toString()).toContain("Approved=false:Boolean");
+  expect(bytes.toString()).toContain("2024-03-10 00:00 -05:00");
+  expect(job.deliveries[0].status).toBe("VERIFIED");
+  const cloud = await page.request.get(
+    `http://localhost:9000/report-results/${job.deliveries[0].object_key}`,
+  );
+  expect(cloud.status()).toBe(200);
+  expect(await cloud.body()).toEqual(bytes);
+});
+
+test("PNG dependency closure registers downloads and renders real HTML image assets", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await login(page, "operator");
+  await page.goto("/templates");
+  const id = `browser-png-${randomUUID()}`;
+  const source = (await readFile("examples/png-assets.jrxml", "utf8")).replace(
+    "Sales summary | Synthetic demonstration data | USD | UTC",
+    id,
+  );
+  const image = await readFile("examples/logo.png");
+  const upload = page.getByRole("group", {
+    name: "Trusted template registration",
+  });
+  await upload.getByLabel("Template name").fill("PNG browser closure");
+  await upload.getByLabel("JRXML file").setInputFiles({
+    name: "logo-report.jrxml",
+    mimeType: "application/xml",
+    buffer: Buffer.from(source),
+  });
+  await upload
+    .getByLabel("I reviewed this executable template and trust its code.")
+    .check();
+  await upload
+    .getByRole("button", {
+      name: "Validate and register template",
+      exact: true,
+    })
+    .click();
+  await expect(upload.getByRole("alert")).toContainText(
+    "validation or compilation failed",
+  );
+  await upload
+    .getByLabel("Template assets (PNG / JRTX / JRXML / TTF, optional)")
+    .setInputFiles({ name: "logo.png", mimeType: "image/png", buffer: image });
+  await expect(
+    page.getByRole("list", { name: "Selected template assets" }),
+  ).toContainText("assets/logo.png");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await upload
+    .getByRole("button", {
+      name: "Validate and register template",
+      exact: true,
+    })
+    .click();
+  await expect(page).toHaveURL(/\/definitions\?template=sha256:[0-9a-f]{64}$/);
+  const sha = new URL(page.url()).searchParams.get("template")!.substring(7);
+  expect(sha).not.toBe(createHash("sha256").update(source).digest("hex"));
+  const bundle = await page.request.get(
+    `/backend/api/v1/templates/${sha}/bundle`,
+  );
+  expect(bundle.status()).toBe(200);
+  expect(bundle.headers()["content-type"]).toBe("application/zip");
+  const archive = await bundle.body();
+  expect(zipEntryBytes(archive, "report.jrxml")).toEqual(Buffer.from(source));
+  expect(zipEntryBytes(archive, "assets/logo.png")).toEqual(image);
+  const definition = page.getByRole("group", {
+    name: "Definition configuration",
+  });
+  await definition.getByLabel("Definition ID").fill(id);
+  await definition.getByLabel("Definition name").fill("PNG browser report");
+  await definition
+    .getByRole("button", { name: "Register definition", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/definitions/${id}$`));
+  await page
+    .getByRole("link", { name: "Generate version 1", exact: true })
+    .click();
+  await page.getByLabel("Output format").selectOption("HTML");
+  await page
+    .getByRole("button", { name: "Submit report", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("status")).toHaveText("SUCCEEDED", {
+    timeout: 60000,
+  });
+  const job = await (
+    await page.request.get(
+      `/backend/api/v1/jobs/${page.url().split("/").at(-1)}`,
+    )
+  ).json();
+  expect(JSON.parse(job.configuration).templateSha256).toBe(sha);
+  const output = await page.request.get(
+    `/backend/api/v1/jobs/${job.id}/outputs/${job.artifacts[0].id}`,
+  );
+  expect(output.status()).toBe(200);
+  const bytes = await output.body();
+  const html = workbookEntry(bytes, "index.html");
+  expect(html).toContain(id);
+  const names = [...html.matchAll(/src="(assets\/[^\"]+)"/g)].map((m) => m[1]);
+  expect(names.length).toBeGreaterThan(0);
+  const emitted = zipEntryBytes(bytes, names[0]);
+  const pixel = await page.evaluate(async (data) => {
+    const url = URL.createObjectURL(
+      new Blob([new Uint8Array(data)], { type: "image/png" }),
+    );
+    try {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      return Array.from(context.getImageData(0, 0, 1, 1).data);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }, Array.from(emitted));
+  expect(pixel).toEqual([255, 0, 0, 255]);
+  expect(job.deliveries[0].status).toBe("VERIFIED");
+  const cloud = await page.request.get(
+    `http://localhost:9000/report-results/${job.deliveries[0].object_key}`,
+  );
+  expect(cloud.status()).toBe(200);
+  expect(await cloud.body()).toEqual(bytes);
+});
+
+test("lost JDBC import acknowledgement recovers one immutable import with the same key", async ({
+  page,
+}) => {
+  await login(page, "operator");
+  await page.goto("/data-sources");
+  const previous = await (
+    await page.request.get("/backend/api/v1/jdbc-source/imports")
+  ).json();
+  const previousIds = new Set(previous.map((item: { id: string }) => item.id));
+  const form = page.getByRole("group", { name: "JDBC snapshot configuration" });
+  await form.getByLabel("Snapshot name").fill(`Recovered JDBC ${randomUUID()}`);
+  await form.getByLabel("Sales category").fill("stationery");
+  let accepted: { sha256: string; importId: string } | undefined;
+  let key: string | undefined;
+  const routePattern = "**/backend/api/v1/jdbc-source/imports";
+  await page.route(routePattern, async (route) => {
+    key = route.request().headers()["idempotency-key"];
+    expect(key).toMatch(/^[0-9a-f-]{36}$/);
+    const response = await route.fetch();
+    expect(response.ok()).toBeTruthy();
+    expect(response.headers()["idempotency-replayed"]).toBe("false");
+    accepted = await response.json();
+    await route.fulfill({
+      status: 503,
+      contentType: "application/problem+json",
+      body: JSON.stringify({
+        detail: "Import acknowledgement interrupted. Retry unchanged fields.",
+      }),
+    });
+  });
+  await form
+    .getByRole("button", { name: "Import snapshot", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Import acknowledgement interrupted" }),
+  ).toBeVisible();
+  expect(accepted?.importId).toMatch(/^[0-9a-f-]{36}$/);
+  await page.unroute(routePattern);
+  await page.route(routePattern, async (route) => {
+    expect(route.request().headers()["idempotency-key"]).toBe(key);
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    expect(response.headers()["idempotency-replayed"]).toBe("true");
+    const recovered = await response.json();
+    expect(recovered.importId).toBe(accepted!.importId);
+    expect(recovered.sha256).toBe(accepted!.sha256);
+    await route.fulfill({ response });
+  });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await form
+    .getByRole("button", { name: "Import snapshot", exact: true })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`/definitions\\?dataSource=data:${accepted!.sha256}$`),
+  );
+  await expect(page.getByLabel("Data source reference")).toHaveValue(
+    `data:${accepted!.sha256}`,
+  );
+  const history = await (
+    await page.request.get("/backend/api/v1/jdbc-source/imports")
+  ).json();
+  const newImports = history.filter(
+    (item: { id: string }) => !previousIds.has(item.id),
+  );
+  expect(newImports.map((item: { id: string }) => item.id)).toEqual([
+    accepted!.importId,
+  ]);
+});
+
+test("named JRTX styles register with complete closure and render delivered HTML", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await login(page, "operator");
+  await page.goto("/templates");
+  const id = `browser-style-${randomUUID()}`;
+  const source = (
+    await readFile("examples/style-assets.jrxml", "utf8")
+  ).replace("Sales summary | Synthetic demonstration data | USD | UTC", id);
+  const styles = await readFile("examples/brand.jrtx");
+  const upload = page.getByRole("group", {
+    name: "Trusted template registration",
+  });
+  await upload.getByLabel("Template name").fill("Named browser styles");
+  await upload.getByLabel("JRXML file").setInputFiles({
+    name: "styled.jrxml",
+    mimeType: "application/xml",
+    buffer: Buffer.from(source),
+  });
+  await upload
+    .getByLabel("I reviewed this executable template and trust its code.")
+    .check();
+  await upload
+    .getByRole("button", {
+      name: "Validate and register template",
+      exact: true,
+    })
+    .click();
+  await expect(upload.getByRole("alert")).toContainText(
+    "validation or compilation failed",
+  );
+  await upload
+    .getByLabel("Template assets (PNG / JRTX / JRXML / TTF, optional)")
+    .setInputFiles({
+      name: "brand.jrtx",
+      mimeType: "application/xml",
+      buffer: styles,
+    });
+  await expect(
+    page.getByRole("list", { name: "Selected template assets" }),
+  ).toContainText("assets/brand.jrtx");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await upload
+    .getByRole("button", {
+      name: "Validate and register template",
+      exact: true,
+    })
+    .click();
+  await expect(page).toHaveURL(/\/definitions\?template=sha256:[0-9a-f]{64}$/);
+  const sha = new URL(page.url()).searchParams.get("template")!.substring(7);
+  const bundle = await page.request.get(
+    `/backend/api/v1/templates/${sha}/bundle`,
+  );
+  expect(bundle.status()).toBe(200);
+  const archive = await bundle.body();
+  expect(zipEntryBytes(archive, "report.jrxml")).toEqual(Buffer.from(source));
+  expect(zipEntryBytes(archive, "assets/brand.jrtx")).toEqual(styles);
+  const definition = page.getByRole("group", {
+    name: "Definition configuration",
+  });
+  await definition.getByLabel("Definition ID").fill(id);
+  await definition.getByLabel("Definition name").fill("Style browser report");
+  await definition
+    .getByRole("button", { name: "Register definition", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/definitions/${id}$`));
+  await page
+    .getByRole("link", { name: "Generate version 1", exact: true })
+    .click();
+  await page.getByLabel("Report title").fill("Styled browser heading");
+  await page.getByLabel("Output format").selectOption("HTML");
+  await page
+    .getByRole("button", { name: "Submit report", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("status")).toHaveText("SUCCEEDED", {
+    timeout: 60000,
+  });
+  const job = await (
+    await page.request.get(
+      `/backend/api/v1/jobs/${page.url().split("/").at(-1)}`,
+    )
+  ).json();
+  expect(JSON.parse(job.configuration).templateSha256).toBe(sha);
+  const output = await page.request.get(
+    `/backend/api/v1/jobs/${job.id}/outputs/${job.artifacts[0].id}`,
+  );
+  expect(output.status()).toBe(200);
+  const bytes = await output.body();
+  const html = workbookEntry(bytes, "index.html");
+  expect(html).toContain("Styled browser heading");
+  expect(html.toLowerCase()).toContain("#ff0000");
+  expect(job.deliveries[0].status).toBe("VERIFIED");
+  const cloud = await page.request.get(
+    `http://localhost:9000/report-results/${job.deliveries[0].object_key}`,
+  );
+  expect(cloud.status()).toBe(200);
+  expect(await cloud.body()).toEqual(bytes);
+});
+
+test("row-scoped JRXML subreports register with closure and render delivered HTML", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await login(page, "operator");
+  await page.goto("/templates");
+  const id = `browser-subreport-${randomUUID()}`;
+  const source = (
+    await readFile("examples/subreport-assets.jrxml", "utf8")
+  ).replace("Sales summary | Synthetic demonstration data | USD | UTC", id);
+  const child = await readFile("examples/subreport-row.jrxml");
+  const upload = page.getByRole("group", {
+    name: "Trusted template registration",
+  });
+  await upload.getByLabel("Template name").fill("Named browser subreports");
+  await upload.getByLabel("JRXML file").setInputFiles({
+    name: "parent.jrxml",
+    mimeType: "application/xml",
+    buffer: Buffer.from(source),
+  });
+  await upload
+    .getByLabel("I reviewed this executable template and trust its code.")
+    .check();
+  await upload
+    .getByRole("button", {
+      name: "Validate and register template",
+      exact: true,
+    })
+    .click();
+  await expect(upload.getByRole("alert")).toContainText(
+    "validation or compilation failed",
+  );
+  await upload
+    .getByLabel("Template assets (PNG / JRTX / JRXML / TTF, optional)")
+    .setInputFiles({
+      name: "subreport-row.jrxml",
+      mimeType: "application/xml",
+      buffer: child,
+    });
+  await expect(
+    page.getByRole("list", { name: "Selected template assets" }),
+  ).toContainText("assets/subreport-row.jrxml");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await upload
+    .getByRole("button", {
+      name: "Validate and register template",
+      exact: true,
+    })
+    .click();
+  await expect(page).toHaveURL(/\/definitions\?template=sha256:[0-9a-f]{64}$/);
+  const sha = new URL(page.url()).searchParams.get("template")!.substring(7);
+  const bundle = await page.request.get(
+    `/backend/api/v1/templates/${sha}/bundle`,
+  );
+  expect(bundle.status()).toBe(200);
+  const archive = await bundle.body();
+  expect(zipEntryBytes(archive, "report.jrxml")).toEqual(Buffer.from(source));
+  expect(zipEntryBytes(archive, "assets/subreport-row.jrxml")).toEqual(child);
+  const definition = page.getByRole("group", {
+    name: "Definition configuration",
+  });
+  await definition.getByLabel("Definition ID").fill(id);
+  await definition
+    .getByLabel("Definition name")
+    .fill("Subreport browser report");
+  await definition
+    .getByRole("button", { name: "Register definition", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/definitions/${id}$`));
+  await page
+    .getByRole("link", { name: "Generate version 1", exact: true })
+    .click();
+  await page.getByLabel("Report title").fill("Subreport browser heading");
+  await page.getByLabel("Output format").selectOption("HTML");
+  await page
+    .getByRole("button", { name: "Submit report", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("status")).toHaveText("SUCCEEDED", {
+    timeout: 60000,
+  });
+  const job = await (
+    await page.request.get(
+      `/backend/api/v1/jobs/${page.url().split("/").at(-1)}`,
+    )
+  ).json();
+  expect(JSON.parse(job.configuration).templateSha256).toBe(sha);
+  const output = await page.request.get(
+    `/backend/api/v1/jobs/${job.id}/outputs/${job.artifacts[0].id}`,
+  );
+  expect(output.status()).toBe(200);
+  const bytes = await output.body();
+  const html = workbookEntry(bytes, "index.html");
+  expect(html).toContain("Subreport browser heading");
+  expect(html).toContain("Child: Atlas notebook");
+  expect(html).toContain("Child: Cedar pen");
+  expect(html).toContain("Child: Harbor planner");
+  expect(job.deliveries[0].status).toBe("VERIFIED");
+  const cloud = await page.request.get(
+    `http://localhost:9000/report-results/${job.deliveries[0].object_key}`,
+  );
+  expect(cloud.status()).toBe(200);
+  expect(await cloud.body()).toEqual(bytes);
+});
+
+test("JDBC-backed jobs recover acceptance and reprocess the same saved snapshot", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  await login(page, "operator");
+  await page.goto("/data-sources");
+  const imports = async () =>
+    (await page.request.get("/backend/api/v1/jdbc-source/imports")).json();
+  const previous = new Set(
+    (await imports()).map((item: { id: string }) => item.id),
+  );
+  const jdbc = page.getByRole("group", { name: "JDBC snapshot configuration" });
+  await jdbc.getByLabel("Sales category").fill("equipment");
+  await jdbc
+    .getByRole("button", { name: "Use JDBC for new jobs", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/definitions\?dataSource=/);
+  expect(new URL(page.url()).searchParams.get("dataSource")).toBe(
+    "jdbc:sales-jdbc:equipment",
+  );
+  const definition = page.getByRole("group", {
+    name: "Definition configuration",
+  });
+  await expect(definition.getByLabel("Data source reference")).toHaveValue(
+    "jdbc:sales-jdbc:equipment",
+  );
+  const id = `browser-current-${randomUUID()}`;
+  await definition.getByLabel("Definition ID").fill(id);
+  await definition
+    .getByLabel("Definition name")
+    .fill("Capture current JDBC rows");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await definition
+    .getByRole("button", { name: "Register definition", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/definitions/${id}$`));
+  expect(
+    (await imports()).filter((item: { id: string }) => !previous.has(item.id)),
+  ).toEqual([]);
+  await expect(
+    page.getByText("Each new job captures current JDBC rows.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("link", { name: "Generate version 1", exact: true })
+    .click();
+  await page.getByLabel("Report title").fill("Fresh JDBC acceptance");
+  await page.getByLabel("Output format").selectOption("CSV");
+  const acknowledgements: { id: string; source: string; key: string }[] = [];
+  await page.route("**/backend/api/v1/jobs", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    const response = await route.fetch();
+    expect(response.status()).toBe(202);
+    const accepted = await response.json();
+    acknowledgements.push({
+      id: accepted.id,
+      source: JSON.parse(accepted.configuration).sourceImportId,
+      key: route.request().headers()["idempotency-key"],
+    });
+    if (acknowledgements.length === 1)
+      await route.fulfill({
+        status: 503,
+        contentType: "application/problem+json",
+        body: JSON.stringify({
+          detail:
+            "JDBC job acknowledgement interrupted. Retry unchanged configuration.",
+        }),
+      });
+    else await route.fulfill({ response });
+  });
+  await page
+    .getByRole("button", { name: "Submit report", exact: true })
+    .click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "JDBC job acknowledgement interrupted" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Submit report", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  expect(acknowledgements).toHaveLength(2);
+  expect(acknowledgements[1]).toEqual(acknowledgements[0]);
+  await expect(page.getByRole("status")).toHaveText("SUCCEEDED", {
+    timeout: 60000,
+  });
+  const parent = await (
+    await page.request.get(`/backend/api/v1/jobs/${acknowledgements[0].id}`)
+  ).json();
+  const config = JSON.parse(parent.configuration);
+  expect(config.definition.data_source_ref).toBe("jdbc:sales-jdbc:equipment");
+  expect(config.datasetVersion).toMatch(/^data:[0-9a-f]{64}$/);
+  expect(config.sourceImportId).toBe(acknowledgements[0].source);
+  const bytes = await (
+    await page.request.get(
+      `/backend/api/v1/jobs/${parent.id}/outputs/${parent.artifacts[0].id}`,
+    )
+  ).body();
+  expect(bytes.toString()).toContain("JDBC desk lamp");
+  expect(bytes.toString()).toContain("96.50");
+  expect(bytes.toString()).not.toContain("JDBC amber journal");
+  expect(parent.deliveries[0].status).toBe("VERIFIED");
+  const cloud = await page.request.get(
+    `http://localhost:9000/report-results/${parent.deliveries[0].object_key}`,
+  );
+  expect(cloud.status()).toBe(200);
+  expect(await cloud.body()).toEqual(bytes);
+  await page
+    .getByRole("region", { name: "Reprocessing", exact: true })
+    .getByRole("button", { name: "Reprocess as new job", exact: true })
+    .click();
+  await expect(page).not.toHaveURL(new RegExp(`/jobs/${parent.id}$`));
+  await expect(page.getByRole("status")).toHaveText("SUCCEEDED", {
+    timeout: 60000,
+  });
+  const child = await (
+    await page.request.get(
+      `/backend/api/v1/jobs/${page.url().split("/").at(-1)}`,
+    )
+  ).json();
+  expect(child.parent_job_id).toBe(parent.id);
+  expect(JSON.parse(child.configuration).sourceImportId).toBe(
+    config.sourceImportId,
+  );
+  expect(JSON.parse(child.configuration).datasetVersion).toBe(
+    config.datasetVersion,
+  );
+  const childBytes = await (
+    await page.request.get(
+      `/backend/api/v1/jobs/${child.id}/outputs/${child.artifacts[0].id}`,
+    )
+  ).body();
+  expect(childBytes).toEqual(bytes);
+  const created = (await imports()).filter(
+    (item: { id: string }) => !previous.has(item.id),
+  );
+  expect(created.map((item: { id: string }) => item.id)).toEqual([
+    config.sourceImportId,
+  ]);
+});
+
+for (const binding of ["nested", "dataset"] as const) {
+  test(`${binding} JRXML subreports register with complete closure and render grandchildren`, async ({
+    page,
+  }) => {
+    test.setTimeout(90000);
+    await login(page, "operator");
+    await page.goto("/templates");
+    const id = `browser-${binding}-${randomUUID()}`;
+    const source = (
+      await readFile(
+        binding === "dataset"
+          ? "examples/dataset-subreport.jrxml"
+          : "examples/nested-subreports.jrxml",
+        "utf8",
+      )
+    )
+      .replace("Sales summary | Synthetic demonstration data | USD | UTC", id)
+      .replace("assets/subreport-row.jrxml", "assets/nested-section.jrxml");
+    const child = await readFile("examples/subreport-row.jrxml");
+    const middle = await readFile("examples/nested-section.jrxml");
+    const upload = page.getByRole("group", {
+      name: "Trusted template registration",
+    });
+    await upload.getByLabel("Template name").fill("Nested browser reports");
+    await upload.getByLabel("JRXML file").setInputFiles({
+      name: "parent.jrxml",
+      mimeType: "application/xml",
+      buffer: Buffer.from(source),
+    });
+    await upload
+      .getByLabel("I reviewed this executable template and trust its code.")
+      .check();
+    await upload
+      .getByRole("button", {
+        name: "Validate and register template",
+        exact: true,
+      })
+      .click();
+    await expect(upload.getByRole("alert")).toContainText(
+      "validation or compilation failed",
+    );
+    await upload
+      .getByLabel("Template assets (PNG / JRTX / JRXML / TTF, optional)")
+      .setInputFiles([
+        {
+          name: "nested-section.jrxml",
+          mimeType: "application/xml",
+          buffer: middle,
+        },
+        {
+          name: "subreport-row.jrxml",
+          mimeType: "application/xml",
+          buffer: child,
+        },
+      ]);
+    await expect(
+      page.getByRole("list", { name: "Selected template assets" }),
+    ).toContainText("assets/subreport-row.jrxml");
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    await upload
+      .getByRole("button", {
+        name: "Validate and register template",
+        exact: true,
+      })
+      .click();
+    await expect(page).toHaveURL(
+      /\/definitions\?template=sha256:[0-9a-f]{64}$/,
+    );
+    const sha = new URL(page.url()).searchParams.get("template")!.substring(7);
+    const bundle = await page.request.get(
+      `/backend/api/v1/templates/${sha}/bundle`,
+    );
+    expect(bundle.status()).toBe(200);
+    const archive = await bundle.body();
+    expect(zipEntryBytes(archive, "report.jrxml")).toEqual(Buffer.from(source));
+    expect(zipEntryBytes(archive, "assets/subreport-row.jrxml")).toEqual(child);
+    expect(zipEntryBytes(archive, "assets/nested-section.jrxml")).toEqual(
+      middle,
+    );
+    const policy = await (
+      await page.request.get("/backend/api/v1/templates/policy")
+    ).json();
+    expect(policy.maxSubreportDepth).toBe(2);
+    expect(policy.maxExpandedSubreports).toBe(8);
+    expect(policy.maxSubreportsPerReport).toBe(4);
+    const definition = page.getByRole("group", {
+      name: "Definition configuration",
+    });
+    await definition.getByLabel("Definition ID").fill(id);
+    await definition
+      .getByLabel("Definition name")
+      .fill("Subreport browser report");
+    await definition
+      .getByRole("button", { name: "Register definition", exact: true })
+      .click();
+    await expect(page).toHaveURL(new RegExp(`/definitions/${id}$`));
+    await page
+      .getByRole("link", { name: "Generate version 1", exact: true })
+      .click();
+    await page.getByLabel("Report title").fill("Subreport browser heading");
+    await page.getByLabel("Output format").selectOption("HTML");
+    await page
+      .getByRole("button", { name: "Submit report", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+    await expect(page.getByRole("status")).toHaveText("SUCCEEDED", {
+      timeout: 60000,
+    });
+    const job = await (
+      await page.request.get(
+        `/backend/api/v1/jobs/${page.url().split("/").at(-1)}`,
+      )
+    ).json();
+    expect(JSON.parse(job.configuration).templateSha256).toBe(sha);
+    const output = await page.request.get(
+      `/backend/api/v1/jobs/${job.id}/outputs/${job.artifacts[0].id}`,
+    );
+    expect(output.status()).toBe(200);
+    const bytes = await output.body();
+    const html = workbookEntry(bytes, "index.html");
+    expect(html).toContain("Subreport browser heading");
+    expect(html).toContain("Child: Atlas notebook");
+    expect(html).toContain("Child: Cedar pen");
+    expect(html).toContain("Child: Harbor planner");
+    expect(html.split("Child: Atlas notebook")).toHaveLength(2);
+    expect(html.split("Child: Cedar pen")).toHaveLength(2);
+    expect(html.split("Child: Harbor planner")).toHaveLength(2);
+    expect(job.deliveries[0].status).toBe("VERIFIED");
+    const cloud = await page.request.get(
+      `http://localhost:9000/report-results/${job.deliveries[0].object_key}`,
+    );
+    expect(cloud.status()).toBe(200);
+    expect(await cloud.body()).toEqual(bytes);
+  });
+}
+
+test("TrueType subsets register and render packaged fonts without scripts", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await login(page, "operator");
+  await page.goto("/templates");
+  const id = `browser-font-${randomUUID()}`;
+  const source = (await readFile("examples/font-assets.jrxml", "utf8")).replace(
+    "Sales summary | Synthetic demonstration data | USD | UTC",
+    id,
+  );
+  const child = await readFile("examples/digits.ttf");
+  const upload = page.getByRole("group", {
+    name: "Trusted template registration",
+  });
+  await upload.getByLabel("Template name").fill("Embedded browser font");
+  await upload.getByLabel("JRXML file").setInputFiles({
+    name: "parent.jrxml",
+    mimeType: "application/xml",
+    buffer: Buffer.from(source),
+  });
+  await upload
+    .getByLabel("I reviewed this executable template and trust its code.")
+    .check();
+  await upload
+    .getByRole("button", {
+      name: "Validate and register template",
+      exact: true,
+    })
+    .click();
+  await expect(upload.getByRole("alert")).toContainText(
+    "validation or compilation failed",
+  );
+  await upload
+    .getByLabel("Template assets (PNG / JRTX / JRXML / TTF, optional)")
+    .setInputFiles({
+      name: "digits.ttf",
+      mimeType: "font/ttf",
+      buffer: child,
+    });
+  await expect(
+    page.getByRole("list", { name: "Selected template assets" }),
+  ).toContainText("assets/digits.ttf");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await upload
+    .getByRole("button", {
+      name: "Validate and register template",
+      exact: true,
+    })
+    .click();
+  await expect(page).toHaveURL(/\/definitions\?template=sha256:[0-9a-f]{64}$/);
+  const sha = new URL(page.url()).searchParams.get("template")!.substring(7);
+  const bundle = await page.request.get(
+    `/backend/api/v1/templates/${sha}/bundle`,
+  );
+  expect(bundle.status()).toBe(200);
+  const archive = await bundle.body();
+  expect(zipEntryBytes(archive, "report.jrxml")).toEqual(Buffer.from(source));
+  expect(zipEntryBytes(archive, "assets/digits.ttf")).toEqual(child);
+  const definition = page.getByRole("group", {
+    name: "Definition configuration",
+  });
+  await definition.getByLabel("Definition ID").fill(id);
+  await definition.getByLabel("Definition name").fill("Font browser report");
+  await definition
+    .getByRole("button", { name: "Register definition", exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/definitions/${id}$`));
+  await page
+    .getByRole("link", { name: "Generate version 1", exact: true })
+    .click();
+  await page.getByLabel("Report title").fill("Font browser heading");
+  await page.getByLabel("Output format").selectOption("HTML");
+  await page
+    .getByRole("button", { name: "Submit report", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("status")).toHaveText("SUCCEEDED", {
+    timeout: 60000,
+  });
+  const job = await (
+    await page.request.get(
+      `/backend/api/v1/jobs/${page.url().split("/").at(-1)}`,
+    )
+  ).json();
+  expect(JSON.parse(job.configuration).templateSha256).toBe(sha);
+  const output = await page.request.get(
+    `/backend/api/v1/jobs/${job.id}/outputs/${job.artifacts[0].id}`,
+  );
+  expect(output.status()).toBe(200);
+  const bytes = await output.body();
+  const html = workbookEntry(bytes, "index.html");
+  expect(html).toContain("Font browser heading");
+  expect(html).toContain("240.00");
+  expect(html.toLowerCase()).not.toContain("<script");
+  const fontPath = [
+    ...html.matchAll(/href="(assets\/font-[a-f0-9]+\.css)"/g),
+  ].map((m) => m[1]);
+  expect(fontPath).toHaveLength(1);
+  const css = workbookEntry(bytes, fontPath[0]);
+  const ttfName = /url\('([^']+\.ttf)'\)/.exec(css)![1];
+  expect(zipEntryBytes(bytes, `assets/${ttfName}`)).toEqual(child);
+  const preview = await page.context().newPage();
+  let fontRequests = 0;
+  await preview.route("http://font-preview.invalid/**", async (route) => {
+    const path =
+      new URL(route.request().url()).pathname.slice(1) || "index.html";
+    const body = zipEntryBytes(bytes, path);
+    if (path.endsWith(".ttf")) fontRequests++;
+    await route.fulfill({
+      status: 200,
+      contentType: path.endsWith(".css")
+        ? "text/css"
+        : path.endsWith(".ttf")
+          ? "font/ttf"
+          : "text/html",
+      body,
+    });
+  });
+  try {
+    await preview.goto("http://font-preview.invalid/index.html");
+    const loaded = await preview.evaluate(async () => {
+      await document.fonts.ready;
+      return [...document.fonts].map((font) => font.status);
+    });
+    expect(loaded).toContain("loaded");
+    expect(fontRequests).toBe(1);
+  } finally {
+    await preview.close();
+  }
+  expect(job.deliveries[0].status).toBe("VERIFIED");
+  const cloud = await page.request.get(
+    `http://localhost:9000/report-results/${job.deliveries[0].object_key}`,
+  );
+  expect(cloud.status()).toBe(200);
+  expect(await cloud.body()).toEqual(bytes);
 });

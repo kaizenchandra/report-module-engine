@@ -16,10 +16,25 @@ class JdbcSalesAdapter {
   private final int port;
   private final ObjectMapper json;
   private final Semaphore permits = new Semaphore(2);
-  static final String SELECT =
-      "SELECT product,quantity,amount FROM public.reporting_sales WHERE category=? ORDER BY id"
-          + " LIMIT 501";
+  static final String VERSION = "postgres-sales-v2";
+  private final JdbcSalesMapping mapping;
 
+  JdbcSalesMapping mapping() {
+    return mapping;
+  }
+
+  JdbcSalesAdapter(
+      String host,
+      int port,
+      String database,
+      String username,
+      String password,
+      String sslMode,
+      ObjectMapper json) {
+    this(host, port, database, username, password, sslMode, json, JdbcSalesMapping.defaults());
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
   JdbcSalesAdapter(
       @Value("${REPORT_JDBC_HOST:}") String host,
       @Value("${REPORT_JDBC_PORT:5432}") int port,
@@ -27,7 +42,8 @@ class JdbcSalesAdapter {
       @Value("${REPORT_JDBC_USERNAME:report_reader}") String username,
       @Value("${REPORT_JDBC_PASSWORD:}") String password,
       @Value("${REPORT_JDBC_SSL_MODE:verify-full}") String sslMode,
-      ObjectMapper json) {
+      ObjectMapper json,
+      JdbcSalesMapping mapping) {
     if (!host.isEmpty()
         && (!host.matches("[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}")
             || port < 1
@@ -44,6 +60,7 @@ class JdbcSalesAdapter {
     this.password = password;
     this.sslMode = sslMode;
     this.json = json;
+    this.mapping = mapping;
   }
 
   boolean configured() {
@@ -83,12 +100,7 @@ class JdbcSalesAdapter {
       throw new ResponseStatusException(
           HttpStatus.TOO_MANY_REQUESTS, "JDBC profile is busy; retry later");
     try (var connection = connect();
-        var statement =
-            connection.prepareStatement(
-                checkOnly
-                    ? "SELECT product,quantity,amount FROM public.reporting_sales WHERE category=?"
-                          + " AND false ORDER BY id LIMIT 0"
-                    : SELECT)) {
+        var statement = connection.prepareStatement(mapping.select(checkOnly))) {
       statement.setQueryTimeout(3);
       statement.setMaxRows(501);
       statement.setString(1, checkOnly ? "" : category);
@@ -98,10 +110,19 @@ class JdbcSalesAdapter {
         if (!Set.of(Types.VARCHAR, Types.CHAR, Types.LONGVARCHAR)
                 .contains(metadata.getColumnType(1))
             || metadata.getColumnType(2) != Types.INTEGER
-            || !Set.of(Types.NUMERIC, Types.DECIMAL).contains(metadata.getColumnType(3)))
+            || !Set.of(Types.NUMERIC, Types.DECIMAL).contains(metadata.getColumnType(3))
+            || !Set.of(Types.SMALLINT, Types.INTEGER, Types.BIGINT)
+                .contains(metadata.getColumnType(4)))
           throw new ResponseStatusException(
-              HttpStatus.UNPROCESSABLE_ENTITY, "JDBC columns must be text, integer and numeric");
+              HttpStatus.UNPROCESSABLE_ENTITY,
+              "JDBC columns must be text, integer and numeric with an integral order key");
+        var orderKeys = new HashSet<Long>();
         while (result.next()) {
+          long order = result.getLong(4);
+          if (result.wasNull() || !orderKeys.add(order))
+            throw new ResponseStatusException(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "JDBC order keys must be nonnull and unique within the selected category");
           var row = rows.addObject();
           row.put("product", result.getString(1));
           int quantity = result.getInt(2);

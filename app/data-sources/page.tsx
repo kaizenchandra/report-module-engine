@@ -43,7 +43,8 @@ export default async function Sources({
         Immutable structured datasets. Definitions select an exact content
         fingerprint, so later registration cannot change an accepted job&apos;s
         rows. Administrators can also import snapshots from the
-        deployment-configured PostgreSQL sales adapter.
+        deployment-configured PostgreSQL adapter with a table/column mapping, or
+        create definitions that capture current JDBC rows for each new job.
       </p>
       <section className="panel">
         <h2>Bundled sample</h2>
@@ -66,8 +67,9 @@ export default async function Sources({
         <section className="panel">
           <h2>JDBC import history</h2>
           <p>
-            Import completion times are UTC. Repeated imports retain separate
-            provenance; identical row contents share a fingerprint.
+            Import completion times are UTC. New imports and JDBC-backed jobs
+            retain separate provenance; retries with the same key recover one
+            import. Identical row contents share a fingerprint.
           </p>
           {!imports?.data ? (
             <p role="alert">Import history unavailable. Reload to retry.</p>
@@ -78,6 +80,11 @@ export default async function Sources({
               {imports.data.map((item) => (
                 <li key={item.id}>
                   {item.category} · {new Date(item.created_at).toISOString()} ·{" "}
+                  {item.mapping_sha256 && (
+                    <>
+                      <code>mapping:{item.mapping_sha256}</code> ·{" "}
+                    </>
+                  )}
                   <Link
                     href={`/definitions?dataSource=data:${item.source_sha256}`}
                   >

@@ -32,9 +32,10 @@ export default async function Templates({
       <p className="eyebrow">TRUSTED REPORTING RESOURCES</p>
       <h1>Templates</h1>
       <p>
-        Immutable source versions identified by their SHA-256. Registered
-        templates remain available across worker restarts. Revised source
-        creates another fingerprint; definitions select an exact fingerprint.
+        Immutable templates identified by content fingerprints covering JRXML
+        and named PNG/JRTX/JRXML/TTF assets. Registered templates remain
+        available across worker restarts. Revised source or image bytes create
+        another fingerprint; definitions select an exact fingerprint.
       </p>
       <section className="panel">
         <h2>Bundled sample</h2>
@@ -50,6 +51,7 @@ export default async function Templates({
         <TemplateUpload
           identity={user.data}
           maxBytes={policy.data.maxSourceBytes}
+          policy={policy.data}
         />
       ) : (
         <p>
@@ -72,6 +74,9 @@ export default async function Templates({
           <p>
             Reference: <code>sha256:{t.sha256}</code>
           </p>
+          {(t.asset_count ?? 0) > 0 && (
+            <p>{t.asset_count} immutable template assets</p>
+          )}
           {admin && (
             <>
               <Link
@@ -82,6 +87,10 @@ export default async function Templates({
               </Link>{" "}
               <a href={`/backend/api/v1/templates/${t.sha256}/source`}>
                 Download registered JRXML
+              </a>
+              {" · "}
+              <a href={`/backend/api/v1/templates/${t.sha256}/bundle`}>
+                Download template bundle
               </a>
             </>
           )}

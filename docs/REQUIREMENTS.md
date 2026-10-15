@@ -7,12 +7,12 @@ Each family below retains the full corresponding scope in the implementation req
 | ARC-01  | Java owns domain; Go owns delivery; Next owns UI                  | 0     | Separate service roots, ADR-001                                                                                     |
 | SEC-01  | OIDC session, OAuth bearer, role enforcement, CSRF                | 0–5   | SecurityConfig; browser foundation spec; object checks required at each domain API                                  |
 | CFG-01  | Versioned strict JSON/YAML contract and policy precedence         | 1,3   | contracts; strict JSON/YAML codec; versioned shape and mapping validation; broader resource precedence remains in 3 |
-| TPL-01  | Trusted templates, fingerprints, dependency closure, versions     | 1,3   | V13 definitions + V15 immutable trusted standalone JRXML, compilation, hash pinning and cache tests; dependency bundles remain open                                                                 |
-| DATA-01 | Structured and JDBC sources, typed parameters, binding, deadlines | 1,3   | V16 typed inputs, V18 JDBC snapshot imports and locale/time-zone rendering; live JDBC/arbitrary schemas remain open                                                        |
+| TPL-01  | Trusted templates, fingerprints, dependency closure, versions     | 1,3   | Versioned trusted JRXML, immutable PNG/JRTX/JRXML closure, bounded child/grandchild graphs, manifest/hash pins and original archives; small embedded TTF subsets; custom bindings/deeper graphs and broader font packs remain open                                                                 |
+| DATA-01 | Structured and JDBC sources, typed parameters, binding, deadlines | 1,3   | V16 typed rows, V18 JDBC imports, per-job JDBC capture with immutable retries/reprocessing, typed P_ parameters and locale/time-zone rendering; general JDBC/render-time reads and arbitrary schemas remain open                                                        |
 | JOB-01  | Durable acceptance, idempotency, lost acknowledgements            | 1     | PostgreSQL transaction and duplicate/conflict tests                                                                 |
 | JOB-02  | State, attempts, fencing, cancellation, deadlines, restart        | 1,2,5 | Batch recovery and linked reprocessing with concurrent idempotency, ownership, fresh-resource and real PDF tests; broader fault tests remain                                                          |
 | ART-01  | PDF output, retained artifacts and integrity                      | 1     | Jasper compile/fill/export and PDF text tests                                                                       |
-| ART-02  | XLSX, CSV, HTML, DOCX, output policies                            | 3     | Exporters verified individually; HTML isolated or attachment-only                                                   |
+| ART-02  | XLSX, CSV, HTML, DOCX, output policies                            | 3     | Exporters verified individually; bounded CSV/XLSX options including a UTF-8 BOM and worksheet names; HTML attachment-only                                                   |
 | DEL-01  | Authenticated durable handoff, independent ownership              | 1     | Delivery contract, Java outbox / Go inbox                                                                           |
 | DEL-02  | S3 + GCS, conflict, checksums, reconciliation, links              | 1,2   | First S3 emulator; provider contracts and real cloud evidence separate                                              |
 | OUT-01  | Separate output/delivery/notification outcomes                    | 1–4   | Aggregation truth table in architecture ADR                                                                         |
@@ -135,3 +135,122 @@ Legacy definition-array consumers and the submission selector remain unpaginated
 | ART-02 / UI-01/02 | Job detail preview with page controls, visible limits, loading/errors/retry/close and authorized download retained | PdfPreviewTest: first-20/page-size limits, malformed PDF and symlink rejection; Chromium multi-page image, injected preview interruption followed by real retry, unchanged execution/artifact/delivery state and unrelated-user rejection |
 
 Preview-before-submission, arbitrary uploaded PDFs, other preview formats, hard parser isolation and report-document accessibility are not implemented. Trusted-template policy and normal delivery requirements remain in force.
+
+## Phase 3 output-options increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| CFG-01 / ART-02 | Optional nonempty outputOptions for both versions; strict types/format membership; snapshotted CSV delimiter and XLSX worksheet splitting | OutputOptionsTest: delimiter-aware quoting, formula protection, real multi-page workbook counts, JSON/YAML round-trip, null/type/unknown-property rejection and unchanged legacy serialization |
+| JOB-01 / UI-01/02 | Settings participate in idempotency; selected-format form controls and editor restoration | MultiOutputTest: duplicate recovery, changed-option conflict, accepted snapshot and real Batch CSV; browser form/editor/YAML/validation/axe/download/cloud byte checks |
+
+PDF encryption, workbook names/protection and arbitrary exporter properties remain open ART-02 scope. No migration, delivery-protocol or dependency change.
+
+## Phase 3 typed template parameter increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| DATA-01 / CFG-01 / TPL-01 | Five bounded scalar types, exact immutable-template name/type binding, sorted canonical values and date-zone conversion | TypedParameterTest: actual PDF/CSV/XLSX values, literal formula text, date zone, JSON/YAML equivalence, range/name/type/count/null rejection and legacy serialization |
+| JOB-01 / JOB-02 | Accepted values retained in request snapshots; idempotency recovery/conflict; pinned schemas across revisions and reprocessing | TemplateRegistrationTest: real PostgreSQL/Batch output, exact-version authenticated discovery, rejected acceptance without inserted jobs, revision stability and linked reprocessing (terminal state synthetic because dispatch is disabled) |
+| UI-01/02 / SEC-01 | Exact-version metadata-driven form, stale-fetch cancellation, unavailable/retry state and editor representability checks | Chromium template registration → definition → typed fields → JSON/YAML → real CSV/Go/S3-emulator delivery; injected metadata interruption, retained typed false/decimal scale/date and axe |
+
+Optional/null/collection parameters, arbitrary classes/schemas, live JDBC parameter binding and template dependencies remain open. No migration, dependency or Go change.
+
+## Phase 3 PNG dependency increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| TPL-01 / CFG-01 | Complete bounded named PNG closure, source/assets manifest fingerprint, V20 immutable rows and read-time integrity | TemplateAssetsTest: actual images in PDF/XLSX/DOCX/HTML, cold compiler, archive bytes, changed bytes/names, legacy hash, malformed paths/expressions/files/dimensions/count/total budgets |
+| JOB-01/02 / SEC-01 | Atomic registration/deduplication, pinned accepted content across definition revisions, admin-only archives | TemplateRegistrationTest: real PostgreSQL/Batch old-red/new-blue image pixels, UPDATE/DELETE guards, controlled corruption rejection, no rows after missing closure and archive role checks |
+| UI-01/02 / ART-02 | PNG file selection and limits, source/image version registration, complete archive download and generated HTML assets | Chromium: missing-image recovery, selected files/axe, exact source/image archive bytes, actual generated PNG pixel and successful Go/S3-emulator output byte equality |
+
+Subreport/style/font bundles, arbitrary ZIP uploads and production parser/compiler isolation remain open. No dependency or Go change; V20 is additive.
+
+## Phase 3 JDBC import recovery increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| DATA-01 / JOB-01 / CFG-01 | Optional actor-scoped import keys, ordered selector fingerprints, V21 immutable result ledger and additive importId/replay header | JdbcSourceTest: original result after changed rows and revoked permission, changed-selector conflict, invalid key, actor isolation, unchanged keyless imports and ledger immutability |
+| JOB-01 / SEC-01 | Source read closes before core transaction; advisory-lock recheck; rows/provenance/audit/key publish atomically | Two real JDBC reads of different source rows converge to one published import; core transaction inactivity during reads; injected persistence failure rolls back all four record families |
+| UI-02 | Mounted-form pending key preserves acknowledgement retries; changed fields create new keys | Chromium injected post-commit acknowledgement loss recovers the same key/import ID/source hash and one history entry, with axe coverage |
+
+This increment improves snapshot import recovery. Live/general JDBC, tenant ACLs and lifecycle/retention policy remain open; no dependency or Go change.
+
+## Phase 3 named style dependency increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| TPL-01 / CFG-01 | Complete bounded PNG/JRTX closure, constant style inheritance validation/flattening, v2 content domain and V22 asset-name extension | TemplateStylesTest: actual PDF red pixels, HTML color, cold cache, combined PNG/styles, byte-sensitive revisions, legacy PNG hash, missing/duplicate/cyclic/external/oversized style rejection |
+| JOB-01/02 | Immutable source/style versions survive current-definition edits | TemplateRegistrationTest: actual PostgreSQL/Batch old-red/new-blue rendering and exact original style archive bytes |
+| UI-02 / ART-02 / SEC-01 | Mixed asset selection, same trusted/admin/CSRF policy, complete archive download and normal generation | Chromium missing-style recovery, selected filenames/axe, source/style archive equality and styled HTML/Go/S3-emulator byte verification |
+
+Conditional styles, font bundles, subreports and live/general JDBC remain open. No dependency or Go change.
+
+## Phase 3 row-scoped subreport increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| TPL-01 / CFG-01 | Complete PNG/JRTX/JRXML closure, one-level detail components, matching parent parameter types, current-row binding, v3 identity and V23 | TemplateSubreportsTest: five-format rendering, current-row/CSV behavior, typed child parameters with actual PNG/style pixels, revisions and rejected missing/unused/nested/external/custom/over-limit/invalid UTF-8 dependencies |
+| JOB-01/02 / ART-02 | Accepted jobs pin original parent and child bytes; archives retain original files | TemplateRegistrationTest: actual PostgreSQL/Batch original/revised child output across definition edits and exact original child archive bytes |
+| UI-02 / SEC-01 | JRXML asset selection under existing trusted/admin/CSRF policy, complete archives and normal generation | Chromium missing-child recovery, selected filenames/axe, original parent/child archive equality, child-row HTML and exact Go/S3-emulator delivery bytes |
+
+General/nested subreports, custom datasets/bindings, fonts and live/general JDBC remain open. No dependency or Go change.
+
+## Phase 3 JDBC-backed job admission increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| DATA-01 / CFG-01 | Versioned jdbc:sales-jdbc category selectors; bounded fixed read outside core transactions; immutable row/import capture at admission | JdbcSourceTest: real read-only PostgreSQL rows, changed-source captures, transaction-boundary assertion and source-unavailable rejection |
+| JOB-01/02 | Preflight and final resource/quota/key validation; atomic rows/import/audit/job/output publication; replay and reprocessing preserve accepted data/import | JdbcSourceTest: two differing concurrent reads publish one job/import, changed-request 409, offline replay/reprocessing, retirement during the read and injected failure after job/output insertion with complete rollback |
+| UI-02 / ART-02 / SEC-01 | Admin definition setup from category without importing now; unchanged job requests, ownership and deployment-owned connection policy | Chromium setup/axe, no pre-job import, lost-acknowledgement same job/key/import recovery, correct category CSV, exact Go/S3-emulator bytes and reprocessing without another import |
+
+General JDBC profiles/queries, render-time live reads, additional field schemas and tenant policies remain open. V23 remains current; no new migration, dependency or Go contract change.
+
+## Phase 3 bounded nested subreport increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| TPL-01 / CFG-01 | Complete acyclic child/grandchild closure; depth 2, four references per document and eight expanded instances per row; immediate-parent typed parameter checks; v4 nested identity | TemplateNestedSubreportsTest: all formats, exact eight-instance graph and rejected excessive fan-out/depth, cycles, missing grandchildren and undeclared intermediate parameters; unchanged flat v3 manifest |
+| DATA-01 / JOB-01/02 | Fresh current-row binding at every level; generated defaults isolated; typed values/locale/time zone and child assets preserved; descendant versions pinned | Actual leaf PDF/CSV rows, DATE/locale/time-zone formatting, red style/blue PNG pixels; PostgreSQL/Batch original/revised grandchild output and exact original archive bytes |
+| UI-02 / ART-02 / SEC-01 | Advertised graph policy and upload guidance under unchanged trusted/admin/CSRF controls; complete original archives and normal output delivery | Chromium missing-closure recovery, two-file selection/axe, policy values, original parent/child/grandchild archives, real grandchild HTML and identical retained/Go/S3-emulator bytes |
+
+General/custom subreport bindings, deeper graphs, fonts and general JDBC remain open. No migration, dependency or Go contract change; V23 remains current.
+
+## Phase 3 small TrueType dependency increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| TPL-01 / CFG-01 / SEC-01 | Complete TTF/JRTX/nested closure; bounded regular TrueType subsets, embedding flags and names; v5 content identity, V24 asset-name extension and per-fill contexts | TemplateFontsTest: malformed/truncated/oversized, missing/unused/external fonts, restricted embedding flags and unsupported glyph rejection; same-name regular/wide/original isolation |
+| ART-01/02 / DATA-01 | Embedded PDF, exact HTML TTF/CSS package closure and relative paths, no script tags; office family hints and existing CSV protection | Actual embedded font streams/widths/text, exact HTML font bytes/CSS targets, Office XML names, blue PNG/font combination and JRTX font use in a grandchild |
+| JOB-01/02 / UI-02 | Immutable font revisions, original archives and functional upload/output workflows | PostgreSQL/Batch original/wide metrics across definition edits and exact original TTF archive; Chromium missing-font recovery/axe, original bundle bytes, verified delivery and actual font loading from a separate HTTP origin |
+
+Full font packs, automatic input subsetting, linked weight/style families, broad script/office visual fidelity, general JDBC and custom subreport bindings remain open. No new dependency or Go contract change.
+
+## Phase 3 dataset summary subreport increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| TPL-01 / CFG-01 / SEC-01 | Direct summary-section components with server-generated full immediate-parent collection binding; unchanged depth/closure/expansion limits, v6 identity and trusted-code controls | TemplateDatasetSubreportsTest: exact manifest, independent sibling cursors, nested dataset/row scopes, rejected custom bindings/internal declarations |
+| DATA-01 / ART-01/02 / JOB-01/02 | Accepted rows only; fresh child datasource, shared CSV protection, immutable source pins | All five exports, exact PDF/CSV counts, empty-data behavior, PostgreSQL/Batch old/new child output after definition edits and exact original archive |
+| UI-02 / ART-02 | Upload guidance, complete source archives and connected generation/delivery | Chromium dataset-summary workflow with a row-scoped grandchild, closure recovery/axe, original files, exact HTML row counts and retained/Go/S3-emulator byte equality |
+
+General child queries/connections, custom mappings/datasets and deeper graphs remain open. No migration, dependency or Go contract change.
+
+## Phase 3 XLSX worksheet-name increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| ART-02 / CFG-01 | Optional bounded ASCII XLSX base name, deterministic page suffixes within 31 characters; same validation in both request versions and JSON/YAML | WorksheetNamesTest: actual combined/split workbook XML, more than nine pages, collision-prone/31-character names, rejected invalid names/types/formats, exact legacy serialization |
+| JOB-01 / JOB-02 | Accepted output name retained; canonical idempotency comparison and normal Batch rendering | PostgreSQL duplicate recovery, changed-name conflict, accepted configuration and actual named XLSX artifact |
+| UI-01/02 / ART-02 | Conditional name control, editor restoration/error recovery and no deselected-format option leakage | Chromium form/JSON/YAML/validation/axe, exact workbook XML and literal formula-like text, SHA-256 and retained/Go/S3-emulator bytes |
+
+Workbook protection, arbitrary exporter properties, broader naming policies and Office visual certification remain open. No migration, dependency or Go contract change.
+
+## Phase 3 CSV byte-order-mark increment
+
+| Requirement | Implementation | Verification |
+| --- | --- | --- |
+| ART-02 / CFG-01 | Optional CSV-only boolean BOM flag; fixed UTF-8 and existing CSV protections | CsvBomTest: exact three-byte prefix and unchanged payload for all delimiters, Unicode/quoting/formula/CRLF checks, both JSON/YAML wire versions, strict types/formats and legacy serialization |
+| JOB-01 / JOB-02 | Accepted flag retained, canonical idempotency and complete-artifact hashing | PostgreSQL/Batch retained true, same-key recovery, changed-flag conflict, actual Unicode CSV prefix/content and SHA-256 |
+| UI-01/02 / ART-02 | Conditional default/true/false control, editor recovery and no deselected-format leakage | Chromium explicit false and true YAML restoration, malformed boolean recovery/axe, exact BOM/content and retained/Go/S3-emulator bytes; default CSV and XLSX regression retained |
+
+Other encodings/custom record delimiters, arbitrary exporter properties and external spreadsheet encoding-detection certification remain open. No migration, dependency or Go contract change.

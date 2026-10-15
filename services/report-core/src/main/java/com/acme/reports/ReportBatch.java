@@ -50,14 +50,18 @@ class ReportBatch {
                           .path("definition")
                           .path("template_resource")
                           .asText(DefinitionController.TEMPLATE);
+                  var templateContent =
+                      DefinitionController.TEMPLATE.equals(reference)
+                          ? null
+                          : TemplateController.content(db, reference);
                   byte[] registeredSource =
                       DefinitionController.TEMPLATE.equals(reference)
                           ? null
-                          : TemplateController.source(db, reference);
+                          : templateContent.renderSource();
                   String actualHash =
                       registeredSource == null
                           ? renderer.templateHash()
-                          : Renderer.sha256(registeredSource);
+                          : templateContent.fingerprint();
                   if (!actualHash.equals(resolved.path("templateSha256").asText()))
                     throw new IllegalStateException("TEMPLATE_VERSION_UNAVAILABLE");
                   String dataReference = resolved.path("datasetVersion").asText("sample-v1");
@@ -74,22 +78,44 @@ class ReportBatch {
                     UUID artifactId = "1".equals(request.schemaVersion()) ? id : UUID.randomUUID();
                     try {
                       byte[] bytes =
-                          (!"en-US".equals(resolved.path("locale").asText("en-US"))
-                                  || !"UTC".equals(resolved.path("timezone").asText("UTC")))
-                              ? renderer.renderConfigured(
+                          request.parameters().values() != null
+                              ? renderer.renderRequest(
                                   registeredSource,
-                                  request.parameters().title(),
+                                  request.parameters(),
                                   format,
                                   rows,
-                                  resolved.path("locale").asText("en-US"),
-                                  resolved.path("timezone").asText("UTC"))
-                              : rows != null
-                                  ? renderer.renderData(
-                                      registeredSource, request.parameters().title(), format, rows)
-                                  : registeredSource == null
-                                      ? renderer.render(request.parameters().title(), format)
-                                      : renderer.renderRegistered(
-                                          registeredSource, request.parameters().title(), format);
+                                  request.outputOptions())
+                              : request.outputOptions() != null
+                                  ? renderer.renderConfigured(
+                                      registeredSource,
+                                      request.parameters().title(),
+                                      format,
+                                      rows,
+                                      resolved.path("locale").asText("en-US"),
+                                      resolved.path("timezone").asText("UTC"),
+                                      request.outputOptions())
+                                  : (!"en-US".equals(resolved.path("locale").asText("en-US"))
+                                          || !"UTC".equals(resolved.path("timezone").asText("UTC")))
+                                      ? renderer.renderConfigured(
+                                          registeredSource,
+                                          request.parameters().title(),
+                                          format,
+                                          rows,
+                                          resolved.path("locale").asText("en-US"),
+                                          resolved.path("timezone").asText("UTC"))
+                                      : rows != null
+                                          ? renderer.renderData(
+                                              registeredSource,
+                                              request.parameters().title(),
+                                              format,
+                                              rows)
+                                          : registeredSource == null
+                                              ? renderer.render(
+                                                  request.parameters().title(), format)
+                                              : renderer.renderRegistered(
+                                                  registeredSource,
+                                                  request.parameters().title(),
+                                                  format);
                       renderer.persist(artifactId, epoch, bytes, format);
                       staged.add(
                           new Staged(artifactId, format, Renderer.sha256(bytes), bytes.length));

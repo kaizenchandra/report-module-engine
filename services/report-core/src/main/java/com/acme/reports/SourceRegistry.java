@@ -13,13 +13,15 @@ import org.springframework.web.server.ResponseStatusException;
 class SourceRegistry {
   private final JdbcTemplate db;
   private final ObjectMapper json;
+  private final JdbcSalesAdapter jdbc;
 
-  SourceRegistry(JdbcTemplate db, ObjectMapper json) {
+  SourceRegistry(JdbcTemplate db, ObjectMapper json, JdbcSalesAdapter jdbc) {
     this.db = db;
     this.json = json;
+    this.jdbc = jdbc;
   }
 
-  record Registration(Map<String, Object> source, boolean created) {}
+  record Registration(Map<String, Object> source, boolean created, UUID importId) {}
 
   @Transactional
   public Registration register(String name, JsonNode rows, String actor, String category)
@@ -51,16 +53,19 @@ class SourceRegistry {
           "INSERT INTO audit_event(actor,action,resource_id) VALUES (?,'DATA_SOURCE_REGISTERED',?)",
           actor,
           sha);
+    UUID id = category == null ? null : UUID.randomUUID();
     if (category != null) {
-      UUID id = UUID.randomUUID();
       db.update(
           "INSERT INTO"
-              + " source_import(id,source_sha256,profile_ref,adapter_version,category,created_by)"
-              + " VALUES (?,?,'sales-jdbc','postgres-sales-v1',?,?)",
+              + " source_import(id,source_sha256,profile_ref,adapter_version,category,created_by,mapping_json,mapping_sha256)"
+              + " VALUES (?,?,'sales-jdbc',?,?,?,?,?)",
           id,
           sha,
+          JdbcSalesAdapter.VERSION,
           category,
-          actor);
+          actor,
+          jdbc.mapping().canonical(),
+          jdbc.mapping().sha256());
       db.update(
           "INSERT INTO audit_event(actor,action,resource_id) VALUES (?,'JDBC_SNAPSHOT_IMPORTED',?)",
           actor,
@@ -69,6 +74,7 @@ class SourceRegistry {
     return new Registration(
         db.queryForMap(
             "SELECT sha256,name,row_count,created_at FROM structured_source WHERE sha256=?", sha),
-        created == 1);
+        created == 1,
+        id);
   }
 }
